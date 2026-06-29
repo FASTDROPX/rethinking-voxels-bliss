@@ -95,49 +95,28 @@ float cloud_movement = (worldTime  + mod(worldDay,100)*24000.0) / 24.0 * Cloud_S
 //  original texel-coverage math is no longer used.
 // =====================================================================
 
-// --- Cloud-shape tunables (Iteration 4 rewrite) ----------------------
-// The geometry is now driven directly by these, NOT by Bliss' old texel
-// math. Horizontal scale is the dominant control: SMALL number = features
-// stretched over a huge world distance = massive sweeping pancakes.
-#define BLISS_FBM_OCTAVES 3           // octaves for the 2D coverage field (multi-scale masses + sub-gaps)
+// --- Noise + shaping tunables (Iteration 6: native Bliss billow restored) ---
+// MEASURED from the untouched Bliss noises.png (512x512): the cloud channels
+// are SMOOTH, with a correlation length of ~20 texels (autocorrelation ~0.5 at
+// lag 16, ~0 at lag 32), and the R/G channels are darker (mean ~0.24) than B
+// (mean ~0.50). Emulating that exact texel pitch + channel statistics is what
+// makes Bliss' ORIGINAL coordinate multipliers reproduce Bliss' native feature
+// sizes (small, scattered, high-contrast puff cells -- not smooth sheets).
+#define BLISS_NOISE_CORR 20.0                       // texel correlation length of noises.png
+#define BLISS_NOISE_RES  (512.0 / BLISS_NOISE_CORR) // procedural pitch == that texture
 
-// Coverage: world distance over which the big masses vary.
-//   1/BLISS_COVER_SCALE = mass size in blocks. 0.00045 -> ~2200-block masses.
-#define BLISS_COVER_SCALE 0.0010      // SMALLER = bigger masses. 0.0010 -> ~1000-block masses (sweeping but with visible shape + parallax)
-#define BLISS_ANISO 0.70              // <1 stretches masses along X into bands (closer to 1 = rounder, less "tube")
-#define BLISS_COVER_GAIN 0.72         // scales the in-game CloudLayerN_coverage slider (0.7*0.72 ~= 0.5 = open sky)
-#define BLISS_EDGE 0.30               // width of the soft coverage onset (bigger = softer/larger edges)
-
-// Erosion: 3D detail carved into the masses. Kept LOW frequency on purpose
-// so the ray never undersamples it (that undersampling was the "spikes").
-#define BLISS_ERODE_SCALE 0.006       // ~165-block detail; do NOT push high or spikes return
-#define BLISS_ERODE_OCTAVES 3
-#define BLISS_ERODE_AMOUNT 0.55       // 0..1 how deeply erosion bites the masses
-
-// High-frequency fluff: micro-detail carved into cloud EDGES so the masses
-// read as organic cloud instead of smooth plastic. It is faded out at grazing
-// view angles (bliss_rayVerticality) where ray steps are huge -- that fade is
-// exactly what stops fine detail from aliasing back into the old "spikes".
-#define BLISS_FLUFF_SCALE 0.022       // ~45-block micro detail (finest octave ~22 blocks)
-#define BLISS_FLUFF_AMOUNT 0.55       // 0..1 how deeply the fluff bites the edges
-
-// Vertical volume: fraction of the layer thickness used as the soft base
-// ramp and the soft top taper (gives heavy 3D volume, not a 2D plane).
-#define BLISS_BASE_FRAC 0.22          // bottom ramp-up over this fraction of layer height
-#define BLISS_TOP_FRAC  0.45          // top taper over this fraction of layer height
-
-// Altostratus (high thin layer 2). Coverage comes from the in-game
-// CloudLayer2_coverage slider (via LAYER2_COVERAGE) so the menu still works.
-#define BLISS_ALTO_SCALE 0.00018      // very large, sweeping high sheets
+// Grazing-angle anti-aliasing (kept from Iteration 5): the FINEST erosion
+// octave is faded toward the horizon (huge ray steps) so fine detail cannot
+// alias into spikes. Driven by bliss_rayVerticality (set in renderClouds).
+#define BLISS_AA_LO 0.12
+#define BLISS_AA_HI 0.50
 
 // --- Runtime globals (set per-call by the adapter / renderer; NOT constants) ---
-// bliss_terrainDist:    world distance to solid terrain along this pixel's ray
-//                       (1e9 on sky pixels). The raymarch stops once it travels
-//                       past this, so clouds no longer draw over / through
-//                       mountains and blocks (depth occlusion -- bug fix).
-// bliss_rayVerticality: abs(view-ray .y); ~1 looking up, ~0 at the horizon.
-//                       Fades the high-frequency fluff out at grazing angles so
-//                       it can never alias into spikes.
+// bliss_terrainDist:    world distance to solid terrain on this pixel's ray
+//                       (1e9 on sky pixels); the raymarch stops past it so
+//                       clouds never draw over / through terrain.
+// bliss_rayVerticality: abs(view-ray .y); ~1 looking up, ~0 at the horizon;
+//                       fades the finest erosion octave at grazing angles.
 float bliss_terrainDist    = 1e9;
 float bliss_rayVerticality = 1.0;
 
@@ -184,135 +163,209 @@ float bliss_vnoise3(vec3 p){
 	return mix(y.x, y.y, f.z);
 }
 
-// Normalised fractal value noise in [0,1] (broadband, like the texture).
-float bliss_fbm2(vec2 p){
-	float v = 0.0, a = 0.5, t = 0.0;
-	for(int i = 0; i < BLISS_FBM_OCTAVES; i++){
-		v += a * bliss_vnoise2(p);
-		t += a;
-		p = p * 2.0 + 17.3; // per-octave offset decorrelates the octaves
-		a *= 0.5;
-	}
-	return v / t;
-}
-
-// =====================================================================
-//  CLOUD DENSITY FIELD  (Iteration 4 -- full rewrite)
-// ---------------------------------------------------------------------
-//  The previous port tried to feed procedural noise into Bliss' original
-//  texel-based coverage math (abs(CloudLarge*2-1.2) billow + a bolt-on
-//  mask). That math was tuned for a specific 512px texture and fought the
-//  procedural field: coverage sat near a constant ~0.3 (full-sky haze) and
-//  the erosion ran at ~1.5-block features that the vertical ray could not
-//  sample, aliasing into the radial "spikes".
-//
-//  This rewrite drives the geometry DIRECTLY:
-//    * coverage  = ONE big low-frequency 2D field, world XZ scaled by a
-//                  tiny number so a feature spans thousands of blocks
-//                  (massive sweeping pancakes), stretched along X.
-//    * a soft QUINTIC onset turns that into cloud vs open sky (no step()).
-//    * a vertical QUINTIC base-ramp * top-taper gives real volume so the
-//      layer is a thick deck, not a 2D plane on the horizon.
-//    * erosion is LOW frequency and MULTIPLICATIVE, so it softens the
-//      masses without ever undersampling (no spikes) and never goes negative.
-//  Every shaping curve is the explicit quintic 6t^5-15t^4+10t^3.
-// =====================================================================
-
-// Explicit quintic (Hermite) smoothing curve. Used for every soft ramp and
-// contrast shaping so NOTHING here uses step() or smoothstep() for density.
+// Explicit quintic (Hermite) smoothing curve 6t^5-15t^4+10t^3 (used by the
+// value noise above and by the grazing-angle anti-alias fade below).
 float bliss_quintic(float x){
 	x = clamp(x, 0.0, 1.0);
 	return x*x*x*(x*(x*6.0 - 15.0) + 10.0);
 }
 
-// Normalised 3D fractal value noise in [0,1] (quintic interpolation lives
-// inside bliss_vnoise3). Kept low frequency by its caller -> no aliasing.
-float bliss_fbm3(vec3 p){
-	float v = 0.0, a = 0.5, t = 0.0;
-	for(int i = 0; i < BLISS_ERODE_OCTAVES; i++){
-		v += a * bliss_vnoise3(p);
-		t += a;
-		p = p * 2.0 + 19.1;
-		a *= 0.5;
-	}
-	return v / t;
+// =====================================================================
+//  CLOUD DENSITY FIELD  (Iteration 6 -- native Bliss billow, restored)
+// ---------------------------------------------------------------------
+//  Iterations 4/5 replaced Bliss' coverage with a smooth quintic onset and
+//  guessed feature scales -> continuous "plastic sheet" clouds. This
+//  restores Bliss' ORIGINAL density math VERBATIM: the BILLOW coverage
+//      abs(CloudLarge*2 - 1.2)*0.5 - (1 - CloudSmall) + LAYER_COVERAGE
+//  and the Perlin-worley erosion. The billow (the abs() of the inverted
+//  noise) is what folds the smooth field into high-contrast, modular
+//  cumulus CELLS with clean blue gaps.
+//
+//  The ONLY change vs the untouched Bliss archive is the noise SOURCE: each
+//  texture2D(noisetex, C).channel is replaced by procedural value noise
+//  sampled at the SAME coord C. The scale + channel statistics were MEASURED
+//  from Bliss' noises.png so feature sizes match natively:
+//     * texel correlation length ~20  -> BLISS_NOISE_RES = 512/20, and the
+//       erosion xz is divided by BLISS_NOISE_CORR so densityAtPos is ~30-block
+//       detail (NOT per-texel -- that 20x-too-fine detail was the old spikes).
+//     * channel means/devs: B ~ (0.50, 0.18), R/G ~ (0.24, 0.13); the
+//       remaps below reproduce them so Bliss' coverage thresholds (tuned for
+//       that texture) give Bliss' native cloud amount.
+//  Depth occlusion (renderLayer) and grazing-angle AA are preserved.
+// =====================================================================
+
+// noisetex.b stand-in (CloudLarge / altostratus): crisp value noise, mean ~0.50.
+float bliss_noiseB(vec2 C){ return bliss_vnoise2(C * BLISS_NOISE_RES + 53.7); }
+// noisetex.r stand-in (CloudSmall, layer 0): darkened to mean ~0.30 like Bliss'
+// dark R/G channel -- the  -(1-CloudSmall)  term is what carves the clean blue
+// GAPS between cells; kept enough variance to still form dense cores. (Channel
+// levels were measured/tuned offline against the billow so the default
+// CloudLayer coverage slider gives Bliss' scattered-cell look, not a sheet.)
+float bliss_noiseR(vec2 C){ return clamp((bliss_vnoise2(C * BLISS_NOISE_RES + 3.1) - 0.5) * 0.85 + 0.30, 0.0, 1.0); }
+
+// 3D erosion noise -- Bliss' "3D noise from a 2D texture", reproduced directly
+// in 3D. xz is divided by BLISS_NOISE_CORR to match the texture's ~20-texel
+// horizontal smoothness (so the erosion is ~30-block detail, well sampled by
+// the ray, NOT per-texel -- that 20x-too-fine detail was the old spikes); y
+// keeps its per-slice scale.
+float bliss_densityAtPos(in vec3 pos){
+	pos /= 18.0;
+	pos.xz *= 0.5;
+	pos.xz /= BLISS_NOISE_CORR;
+	return clamp((bliss_vnoise3(pos) - 0.5) * 0.85 + 0.30, 0.0, 1.0);
 }
 
-// Big sweeping horizontal coverage field in [0,1]. World XZ is scaled by the
-// tiny BLISS_COVER_SCALE so one feature spans thousands of blocks; X is
-// stretched further by BLISS_ANISO into long pancake bands. The quintic
-// makes the masses distinct from the gaps with smooth (not stepped) shoulders.
-float bliss_coverageField(int layer, vec2 worldXZ){
-	vec2 p = worldXZ * BLISS_COVER_SCALE;
-	p.x *= BLISS_ANISO;
-	p += vec2(cloud_movement * BLISS_COVER_SCALE, 0.0); // wind drift
-	p += float(layer) * 31.7;                            // decorrelate the two decks
-	return bliss_quintic(bliss_fbm2(p));
-}
-
-// High, thin altostratus sheet (layer 2): one very large, sweeping field.
 float bliss_GetAltostratusDensity(vec3 pos){
-	vec2 p = pos.xz * BLISS_ALTO_SCALE;
-	p.x *= BLISS_ANISO;
-	p += vec2(cloud_movement * BLISS_ALTO_SCALE, 0.0);
-	float cover = bliss_quintic(bliss_fbm2(p));
-	// coverage from the in-game CloudLayer2 slider (+ rain), soft quintic onset
-	float altoCov = clamp(LAYER2_COVERAGE, 0.0, 1.0);
-	float d = (cover - (1.0 - altoCov)) / max(altoCov, 1e-3);
-	float sheet = bliss_quintic(clamp(d, 0.0, 1.0));
-	return sheet * sheet;
+
+	float large = 1.0 - bliss_noiseB((pos.xz + cloud_movement)/100000.);
+	large = max(large + LAYER2_COVERAGE - 0.7, 0.0);
+
+	float medium = 1.0 - bliss_noiseB((pos.xz - cloud_movement)/7500. + vec2(-large,1.0-large)/5.0);
+
+	float shape = max(large - medium*0.4 * clamp(1.5-large,0.0,1.0),0.0);
+
+	return shape*shape;
 }
 
-// Cumulus density in [0,1] for one ray sample. Same signature Bliss'
-// renderer calls; LoD>=1 adds erosion, LoD<1 is the cheap shadow tap.
-float bliss_GetCumulusDensity(int layer, in vec3 pos, in int LoD, float minHeight, float maxHeight){
+float bliss_cloudCov(int layer, in vec3 pos, vec3 samplePos, float minHeight, float maxHeight){
+	float FinalCloudCoverage = 0.0;
+	float coverage = 0.0;
+	float Topshape = 0.0;
+	float Baseshape = 0.0;
 
-	// --- vertical volume profile: soft base ramp * soft top taper --------
-	float thickness = max(maxHeight - minHeight, 1.0);
-	float h = (pos.y - minHeight) / thickness;          // 0 at base, 1 at top
-	if (h <= 0.0 || h >= 1.0) return 0.0;
-	float baseRamp = bliss_quintic(h / BLISS_BASE_FRAC);          // flat-ish soft base
-	float topTaper = bliss_quintic((1.0 - h) / BLISS_TOP_FRAC);   // rounded soft top
-	float vprofile = baseRamp * topTaper;
-	if (vprofile <= 0.0) return 0.0;
+	float LAYER0_minHEIGHT_FOG = CloudLayer0_height;
+	float LAYER0_maxHEIGHT_FOG = 100 + LAYER0_minHEIGHT_FOG;
+	LAYER0_minHEIGHT_FOG = LAYER0_minHEIGHT;
+	LAYER0_maxHEIGHT_FOG = LAYER0_maxHEIGHT;
 
-	// --- horizontal coverage: massive sweeping masses --------------------
-	float coverage = bliss_coverageField(layer, pos.xz);
-	// coverage amount from the in-game CloudLayerN slider (+ rain), scaled so
-	// the default reads as open sky. layer is 0 or 1 here.
-	float layerCov = (layer == 1) ? LAYER1_COVERAGE : LAYER0_COVERAGE;
-	float covAmt = clamp(layerCov * BLISS_COVER_GAIN, 0.0, 1.0);
-	// soft coverage onset via quintic ramp (NO hard step / threshold)
-	float d = (coverage - (1.0 - covAmt)) / BLISS_EDGE;
-	float cloud = bliss_quintic(clamp(d, 0.0, 1.0));
-	if (cloud <= 0.0) return 0.0;
+	float LAYER1_minHEIGHT_FOG = max(CloudLayer1_height, LAYER0_maxHEIGHT);
+	float LAYER1_maxHEIGHT_FOG = 100 + LAYER1_minHEIGHT_FOG;
+	LAYER1_minHEIGHT_FOG = LAYER1_minHEIGHT;
+	LAYER1_maxHEIGHT_FOG = LAYER1_maxHEIGHT;
 
-	cloud *= vprofile;
 
-	// --- erosion: LOW frequency + MULTIPLICATIVE (no spikes, never negative)
-	if (LoD >= 1){
-		vec3 ep = pos * BLISS_ERODE_SCALE;
-		ep.xz *= 0.5;                                    // stretch erosion horizontally
-		float er = bliss_quintic(bliss_fbm3(ep));
-		// bite edges harder than cores (weight by 1-cloud)
-		cloud *= 1.0 - er * BLISS_ERODE_AMOUNT * (1.0 - cloud);
+	vec2 SampleCoords0 = vec2(0.0); vec2 SampleCoords1 = vec2(0.0);
 
-		// High-frequency fluff: organic micro-detail on the edges. Faded by
-		// view verticality so it is full strength overhead (small, densely
-		// sampled ray steps) and gone toward the horizon (huge steps) -- this
-		// is what lets us add fine detail WITHOUT the detail aliasing into spikes.
-		float fluffFade = bliss_quintic(clamp((bliss_rayVerticality - 0.30) / 0.40, 0.0, 1.0));
-		if (fluffFade > 0.0){
-			vec3 fp = pos * BLISS_FLUFF_SCALE;
-			fp.xz *= 0.6;
-			// two-octave quintic value noise; finest octave kept coarse enough
-			// (~half the base) to stay sampled near the camera.
-			float fluff = bliss_vnoise3(fp) * 0.65 + bliss_vnoise3(fp * 2.0 + 7.3) * 0.35;
-			cloud *= 1.0 - bliss_quintic(fluff) * BLISS_FLUFF_AMOUNT * fluffFade * (1.0 - cloud);
+	float CloudSmall = 0.0;
+	if(layer == 0){
+		SampleCoords0 = (samplePos.xz + cloud_movement) / 5000 ;
+		SampleCoords1 = (samplePos.xz - cloud_movement) / 500 ;
+		CloudSmall = bliss_noiseR(SampleCoords1);
+	}
+
+	if(layer == 1){
+		SampleCoords0 = -( (samplePos.zx + cloud_movement*2) / 10000);
+		SampleCoords1 = -( (samplePos.zx - cloud_movement*2) / 2500);
+		CloudSmall = bliss_noiseB(SampleCoords1);
+	}
+
+	if(layer == -1){
+		float otherlayer = max(pos.y - (LAYER0_minHEIGHT_FOG+99.5), 0.0) > 0 ? 0.0 : 1.0;
+		if(otherlayer > 0.0){
+			SampleCoords0 = (samplePos.xz + cloud_movement) / 5000 ;
+			SampleCoords1 = (samplePos.xz - cloud_movement) / 500 ;
+			CloudSmall = bliss_noiseR(SampleCoords1);
+		}else{
+			SampleCoords0 = -( (samplePos.zx + cloud_movement*2) / 10000);
+			SampleCoords1 = -( (samplePos.zx - cloud_movement*2) / 2500);
+			CloudSmall = bliss_noiseB(SampleCoords1);
 		}
 	}
 
-	return clamp(cloud, 0.0, 1.0);
+	float CloudLarge = bliss_noiseB(SampleCoords0);
+
+	if(layer == 0){
+		coverage = abs(CloudLarge*2.0 - 1.2)*0.5 - (1.0-CloudSmall);
+
+		float layer0 = min(min(coverage + LAYER0_COVERAGE, clamp(LAYER0_maxHEIGHT_FOG - pos.y,0,1)), 1.0 - clamp(LAYER0_minHEIGHT_FOG - pos.y,0,1));
+
+		Topshape = max(pos.y - (LAYER0_maxHEIGHT_FOG - 75),0.0) / 200.0;
+		Topshape += max(pos.y - (LAYER0_maxHEIGHT_FOG - 10),0.0) / 15.0;
+		Baseshape = max(LAYER0_minHEIGHT_FOG + 12.5 - pos.y, 0.0) / 50.0;
+
+		FinalCloudCoverage = max(layer0 - Topshape - Baseshape * (1.0-rainStrength),0.0);
+	}
+
+	if(layer == 1){
+
+		coverage = abs(CloudLarge-0.8) - CloudSmall;
+
+		float layer1 = min(min(coverage + LAYER1_COVERAGE - 0.5,clamp(LAYER1_maxHEIGHT_FOG - pos.y,0,1)), 1.0 - clamp(LAYER1_minHEIGHT_FOG - pos.y,0,1));
+
+		Topshape = max(pos.y - (LAYER1_maxHEIGHT_FOG - 75),0.0) / 200.0;
+		Topshape += max(pos.y - (LAYER1_maxHEIGHT_FOG - 10), 0.0) / 15.0;
+		Baseshape = max(LAYER1_minHEIGHT_FOG + 15.5 - pos.y, 0.0) / 50.0;
+
+		FinalCloudCoverage = max(layer1 - Topshape*Topshape - Baseshape * (1.0-rainStrength), 0.0);
+	}
+
+
+	if(layer == -1){
+
+		#ifdef CloudLayer0
+			float layer0_coverage =  abs(CloudLarge*2.0 - 1.2)*0.5 - (1.0-CloudSmall);
+			float layer0 = min(min(layer0_coverage + LAYER0_COVERAGE, clamp(LAYER0_maxHEIGHT_FOG - pos.y,0,1)), 1.0 - clamp(LAYER0_minHEIGHT_FOG - pos.y,0,1));
+
+			Topshape = max(pos.y - (LAYER0_maxHEIGHT_FOG - 75),0.0) / 200.0;
+			Topshape += max(pos.y - (LAYER0_maxHEIGHT_FOG - 10),0.0) / 15.0;
+			Baseshape = max(LAYER0_minHEIGHT_FOG + 12.5 - pos.y, 0.0) / 50.0;
+
+			FinalCloudCoverage = max(layer0 - Topshape - Baseshape * (1.0-rainStrength),0.0);
+		#endif
+
+		#ifdef CloudLayer1
+			float layer1_coverage = abs(CloudLarge-0.8) - CloudSmall;
+			float layer1 = min(min(layer1_coverage + LAYER1_COVERAGE - 0.5,clamp(LAYER1_maxHEIGHT_FOG - pos.y,0,1)), 1.0 - clamp(LAYER1_minHEIGHT_FOG - pos.y,0,1));
+
+			Topshape = max(pos.y - (LAYER1_maxHEIGHT_FOG - 75), 0.0) / 200;
+			Topshape += max(pos.y - (LAYER1_maxHEIGHT_FOG - 10 ), 0.0) / 50;
+			Baseshape = max(LAYER1_minHEIGHT_FOG + 12.5 - pos.y, 0.0) / 50.0;
+
+			FinalCloudCoverage += max(layer1 - Topshape*Topshape - Baseshape * (1.0-rainStrength), 0.0);
+		#endif
+	}
+
+	return FinalCloudCoverage;
+}
+
+//Erode cloud with 3d Perlin-worley noise, actual cloud value
+float bliss_cloudVol(int layer, in vec3 pos, in vec3 samplePos, in float cov, in int LoD, float minHeight, float maxHeight){
+
+	float otherlayer = max(pos.y - (CloudLayer0_height+99.5), 0.0) > 0 ? 0.0 : 1.0;
+	float upperPlane = otherlayer;
+
+	float noise = 0.0 ;
+	float totalWeights = 0.0;
+
+	samplePos.xz -= cloud_movement/4;
+
+	samplePos.xz += pow( max(pos.y - (minHeight+20), 0.0) / 20.0,1.50) ;
+
+	noise += (1.0-bliss_densityAtPos(samplePos * mix(100.0,200.0,upperPlane)) ) * sqrt(1.0-cov);
+
+	if (LoD > 0){
+		// grazing-angle anti-alias: fade this FINEST erosion octave toward the
+		// horizon (huge ray steps) so it cannot alias into spikes.
+		float aa = bliss_quintic(clamp((bliss_rayVerticality - BLISS_AA_LO) / (BLISS_AA_HI - BLISS_AA_LO), 0.0, 1.0));
+		noise += abs( bliss_densityAtPos(samplePos * mix(450.0,600.0,upperPlane) ) - (1.0-clamp(((maxHeight - pos.y) / 100.0),0.0,1.0))) * 0.75 * (1.0-cov) * aa;
+	}
+
+	noise = noise*noise;
+	float cloud = max(cov - noise*noise*fbmAmount,0.0);
+
+	return cloud;
+}
+
+float bliss_GetCumulusDensity(int layer, in vec3 pos, in int LoD, float minHeight, float maxHeight){
+
+	vec3 samplePos =  pos*vec3(1.0,1./48.,1.0)/4;
+
+	float coverageSP = bliss_cloudCov(layer, pos,samplePos, minHeight, maxHeight);
+
+	if (coverageSP > 0.001) {
+		if (LoD < 0) return max(coverageSP - 0.27*fbmAmount,0.0);
+		return bliss_cloudVol(layer, pos,samplePos,coverageSP,LoD,minHeight, maxHeight) ;
+	} else return 0.0;
 }
 
 

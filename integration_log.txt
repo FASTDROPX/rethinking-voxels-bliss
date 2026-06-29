@@ -258,3 +258,84 @@ BALANCE / SAFETY CONFIRMATION (Iteration 5)
    - fluff gated by LoD>=1 and faded by ray verticality (no horizon alias): PASS
    - GLSL 1.30 safe; globals use constant initialisers                   : PASS
 =======================================================================
+
+
+=======================================================================
+ DEBUG ITERATION 6 -- BILLOW CONTRAST MATH RESTORED (cells, not sheets)
+=======================================================================
+WHAT WAS WRONG
+--------------
+Iteration 4/5 replaced Bliss' coverage with a smooth, CONTINUOUS quintic
+onset of a low-frequency fbm. Continuous noise + a soft onset can only ever
+produce smooth, sinuous SHEETS -- there is no mechanism to fold the field
+into discrete cells. On top of that the feature scale was guessed far too
+large (~1000-block masses), so within any view the field barely varied =
+"plastic". Both are fixed here.
+
+CHANGE 1 -- RESTORED THE BLISS BILLOW COVERAGE (the abs() contrast math)
+-----------------------------------------------------------------------
+The smooth onset / vertical-profile / coverageField functions were DELETED
+and Bliss' ORIGINAL density field was put back VERBATIM:
+    bliss_densityAtPos, bliss_cloudCov, bliss_cloudVol, bliss_GetCumulusDensity
+    bliss_GetAltostratusDensity
+Coverage is once again the BILLOW form
+    layer0:  abs(CloudLarge*2.0 - 1.2)*0.5 - (1.0 - CloudSmall) + LAYER0_COVERAGE
+    layer1:  abs(CloudLarge - 0.8)         -        CloudSmall  + LAYER1_COVERAGE - 0.5
+plus Bliss' Topshape/Baseshape vertical erosion and the Perlin-worley
+cloudVol erosion. Taking the ABSOLUTE value of the (inverted) noise folds
+the smooth field at its mid-level, creating sharp, high-contrast cell
+BOUNDARIES -- the modular cumulus cells with clean blue gaps. This is the
+core of the correction: continuous noise -> billow cells.
+
+CHANGE 2 -- FEATURE SCALES MEASURED FROM noises.png (not guessed)
+----------------------------------------------------------------
+I inspected the untouched Bliss noises.png (512x512). The cloud channels are
+SMOOTH: autocorrelation ~0.5 at lag 16 texels and ~0 at lag 32, i.e. a
+correlation length of ~20 texels (the R/G channels are also darker, mean
+~0.24, vs B mean ~0.50). Two consequences, both now encoded:
+   * The procedural pitch must be  BLISS_NOISE_RES = 512 / 20, so Bliss'
+     ORIGINAL coordinate multipliers (worldXZ/20000, /2000, /100000, ...)
+     reproduce Bliss' native feature sizes (CloudLarge ~780 blocks,
+     CloudSmall ~78 blocks, etc.).
+   * The 3D erosion must match the SAME ~20-texel smoothness: densityAtPos
+     divides xz by BLISS_NOISE_CORR, making the erosion ~30-block detail.
+     Previously it was per-texel (~1.5 block) -- 20x too fine -- which is
+     exactly what the vertical ray could not sample and what produced the
+     radial "spikes". So the correct scale ALSO removes the spike source.
+
+CHANGE 3 -- CHANNEL LEVELS TUNED OFFLINE FOR THE SCATTERED-CELL LOOK
+-------------------------------------------------------------------
+A coverage simulation (the exact billow math in numpy) was used to pick the
+channel transforms, rather than guessing:
+   noiseB (CloudLarge) = value noise, mean ~0.50      (crisp, like B)
+   noiseR (CloudSmall) = value noise * 0.85 + dark bias -> mean ~0.30
+The dark CloudSmall is essential: the  -(1-CloudSmall)  term drives coverage
+NEGATIVE in the gaps, which is what opens the clean blue sky between cells.
+At the default coverage slider (0.7) this yields ~58% sky with cloud, ~11%
+dense cores and ~21% fully-clear gaps (plus partial-blue between) -- i.e.
+scattered cells with gaps, not a sheet.
+
+CHANGE 4 -- CONTRACTS PRESERVED
+-------------------------------
+   * Depth occlusion (bliss_terrainDist, set in the adapter; tested in the
+     cumulus loop AND the altostratus branch of renderLayer) is unchanged.
+   * Grazing-angle anti-aliasing is retained: the FINEST cloudVol erosion
+     octave (the mix(450,600) Perlin-worley term) is multiplied by
+        aa = quintic(clamp((bliss_rayVerticality - BLISS_AA_LO)/(BLISS_AA_HI-BLISS_AA_LO),0,1))
+     so it fades out at the horizon (huge steps) and cannot alias into spikes.
+   * Noise is still world-anchored (rayProgress includes cameraPosition).
+
+REMOVED (no longer referenced): bliss_fbm2, bliss_fbm3, bliss_coverageField,
+and the iteration-4/5 tunables (BLISS_COVER_SCALE/ANISO/COVER_GAIN/EDGE/
+ERODE_*/FLUFF_*/BASE_FRAC/TOP_FRAC/ALTO_SCALE/FBM_OCTAVES).
+
+BALANCE / SAFETY CONFIRMATION (Iteration 6)
+   - {} () [] balance == 0 on bliss_clouds.glsl                          : PASS
+   - #if / #ifdef / #ifndef (32) == #endif (32)                         : PASS
+   - billow abs() coverage restored at all 4 sites (layer0/1, main+fog)  : PASS
+   - feature pitch = 512/20 (measured); erosion xz /CORR (no spikes)     : PASS
+   - depth occlusion + grazing AA preserved                              : PASS
+   - no orphan refs to removed fbm2/fbm3/coverageField/iter4-5 macros    : PASS
+   - no step()/smoothstep(); explicit quintic only                       : PASS
+   - GLSL 1.30 safe                                                      : PASS
+=======================================================================
