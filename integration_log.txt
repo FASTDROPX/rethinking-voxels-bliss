@@ -495,3 +495,63 @@ BALANCE / SAFETY CONFIRMATION (Iteration 8)
    - eastVec declared under CLOUD_SHADOWS in all terrain programs          : PASS
    - shape constants + iter-7 lighting tunables unchanged                 : PASS
 =======================================================================
+
+
+=======================================================================
+ DEBUG ITERATION 9 -- CLEAR-WEATHER DENSITY, GUI SPEED SYNC, HORIZON FOG
+=======================================================================
+All three are quantity/scaling tweaks; the Iteration 6 billow shape math and
+the Iteration 7/8 radiance + alpha fixes are untouched.
+
+1) HALF THE CLOUDS ON CLEAR DAYS
+   rainStrength is 0 on clear days and ramps to 1 in rain/thunder. A shared
+   scale is applied to every layer's coverage:
+       bliss_clearScale = mix(BLISS_CLEAR_COVERAGE, 1.0, rainStrength);  // clear->0.72, rain->1.0
+       LAYER0/1/2_COVERAGE = (original weather mix) * bliss_clearScale;
+   This tightens the billow threshold (coverage + LAYER_COVERAGE) only on
+   clear days. Offline billow simulation: the default LAYER0_COVERAGE 0.70
+   covers ~58% of sky; scaling to 0.70*0.72 ~= 0.50 covers ~28% -> ~0.48x,
+   i.e. about half the clouds, with full coverage restored as it rains.
+   BLISS_CLEAR_COVERAGE = 1.0 disables the reduction. The scale is shared by
+   the self-shadow sampler too, so shadows stay consistent with the clouds.
+
+2) CLOUD SPEED LINKED TO THE GUI SLIDER
+   cloud_movement previously used only Bliss' own Cloud_Speed (the RV main
+   "Cloud Speed" slider, CLOUD_SPEED_MULT, did nothing for Bliss). Now:
+       cloud_movement = (worldTime + ...) / 24 * Cloud_Speed * (CLOUD_SPEED_MULT * 0.01);
+   CLOUD_SPEED_MULT is a percent (100 = baseline, range 0..900 in the menu),
+   so the in-game slider scales or PAUSES (0) cloud motion. At the defaults
+   (Cloud_Speed 1.0, CLOUD_SPEED_MULT 100) the speed equals the old baseline,
+   so this is non-regressive; the user's 900 setting now gives 9x drift.
+   CLOUD_SPEED_MULT is a global #define from common.glsl, available in every
+   program that compiles the cloud code.
+
+3) HORIZON FOG (SOFT DISTANT EXTINCTION)
+   The Bliss raymarch has no hard far-cut, so toward the horizon the ray
+   reaches the cloud plane at an enormous distance and the deck rendered out
+   crisply to infinity (it also is NOT covered by RV's DoFog, which runs
+   before clouds are composited in deferred1). Added a distance fade in the
+   adapter, on the cloud ALPHA (after the un-premultiply, so colour is
+   unaffected):
+       cloudDist   = max(CloudLayer0_height - cameraPos.y, 32) / max(|nPlayerPos.y|, 0.05);
+       alpha      *= 1.0 - smoothstep(distanceThreshold*BLISS_FOG_START,
+                                      distanceThreshold*BLISS_FOG_END, cloudDist);
+   distanceThreshold is RV's own per-view-angle cloud render distance (bigger
+   looking up, ~far at the horizon), so overhead clouds are untouched and only
+   the near-horizon deck dissolves into the haze -- matching how the Unbound /
+   Reimagined styles fade. cloudDist is reused for cloudLinearDepth.
+
+TUNABLES (top of bliss_clouds.glsl)
+   BLISS_CLEAR_COVERAGE 0.72   (1.0 = no clear-weather reduction)
+   BLISS_FOG_START 0.55  BLISS_FOG_END 1.25   (fractions of cloud render distance)
+   in-game: Cloud_Speed (Bliss submenu) and CLOUD_SPEED_MULT (main Cloud Speed)
+
+BALANCE / SAFETY CONFIRMATION (Iteration 9)
+   - bliss_clouds.glsl  {} () [] == 0 ; #if(32)==#endif(32)              : PASS
+   - billow shape math + iter-7/8 radiance & alpha code unchanged          : PASS
+   - bliss_clearScale / cloud_movement are global initializers reading
+     rainStrength/uniforms -- consistent with the existing LAYER_* globals   : PASS
+   - CLOUD_SPEED_MULT defined in common.glsl, never #undef'd                : PASS
+   - smoothstep used only for the alpha horizon fade (not density)          : PASS
+   - GLSL 1.30 safe                                                        : PASS
+=======================================================================

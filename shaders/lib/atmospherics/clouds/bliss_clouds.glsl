@@ -16,6 +16,16 @@
 */
 #include "/lib/atmospherics/clouds/bliss_clouds_compat.glsl"
 
+// --- Iteration 9 tunables (weather / speed / horizon -- NOT shape or radiance) ---
+// Clear-weather coverage scale: rainStrength is 0 on clear days and 1 in
+// rain/thunder, so coverage is multiplied by this when clear. 0.70 ~= half the
+// sky covered vs the rainy baseline (see integration_log Iteration 9). 1.0 = off.
+#define BLISS_CLEAR_COVERAGE 0.72
+// Horizon fog: cloud alpha fades to 0 between these fractions of RV's cloud
+// render distance, so the deck dissolves into haze instead of clipping.
+#define BLISS_FOG_START 0.55
+#define BLISS_FOG_END   1.25
+
 #ifdef HQ_CLOUDS
 	int maxIT_clouds = minRayMarchSteps;
 	int maxIT = maxRayMarchSteps;
@@ -56,9 +66,13 @@ float LAYER2_HEIGHT = max(CloudLayer2_height, LAYER1_maxHEIGHT);
 // float LAYER1_COVERAGE = mix(pow(dailyWeatherParams0.y*2.0,0.2), 0.8, rainStrength);
 // float LAYER2_COVERAGE = mix(pow(dailyWeatherParams0.z*2.0,0.2), 1.3, rainStrength);
 
-float LAYER0_COVERAGE = mix(dailyWeatherParams0.x, Rain_coverage, rainStrength);
-float LAYER1_COVERAGE = mix(dailyWeatherParams0.y, 0.0, rainStrength);
-float LAYER2_COVERAGE = mix(dailyWeatherParams0.z, 1.5, rainStrength);
+// Iteration 9: scale coverage down on CLEAR days (rainStrength 0 -> clear) so
+// sunny skies are sparse; full coverage returns as it rains. Shared by all
+// cumulus + altostratus layers and by the self-shadow sampler (consistent).
+float bliss_clearScale = mix(BLISS_CLEAR_COVERAGE, 1.0, rainStrength);
+float LAYER0_COVERAGE = mix(dailyWeatherParams0.x, Rain_coverage, rainStrength) * bliss_clearScale;
+float LAYER1_COVERAGE = mix(dailyWeatherParams0.y, 0.0, rainStrength) * bliss_clearScale;
+float LAYER2_COVERAGE = mix(dailyWeatherParams0.z, 1.5, rainStrength) * bliss_clearScale;
 
 float LAYER0_DENSITY = mix(dailyWeatherParams1.x,1.0,rainStrength);
 float LAYER1_DENSITY = mix(dailyWeatherParams1.y,0.0,rainStrength);
@@ -66,7 +80,12 @@ float LAYER2_DENSITY = mix(dailyWeatherParams1.z,0.05,rainStrength);
 
 // [RV-PORT] removed (provided by RV uniforms.glsl / not needed): uniform int worldDay;
 
-float cloud_movement = (worldTime  + mod(worldDay,100)*24000.0) / 24.0 * Cloud_Speed;
+// Iteration 9: advection speed is driven by BOTH the Bliss "Cloud Speed"
+// slider (Cloud_Speed) AND RV's main "Cloud Speed" GUI slider (CLOUD_SPEED_MULT,
+// a percent where 100 = baseline) so cloud motion can be tuned or paused from
+// the in-game menu. At the defaults (Cloud_Speed 1.0, CLOUD_SPEED_MULT 100) this
+// equals the previous fixed baseline.
+float cloud_movement = (worldTime  + mod(worldDay,100)*24000.0) / 24.0 * Cloud_Speed * (CLOUD_SPEED_MULT * 0.01);
 
 // =====================================================================
 //  NOISE BRIDGE  (Bliss noisetex  ->  RV-safe procedural noise)
@@ -894,13 +913,21 @@ vec4 GetVolumetricClouds(int cloudAltitude, float distanceThreshold, inout float
     //     low-density edges fade to clean translucency.
     float alpha = clamp(1.0 - raw.a, 0.0, 1.0);
     vec3 straightColor = min(raw.rgb / max(alpha, 1e-3), vec3(8.0)); // /alpha + firefly clamp
+
+    // (6b) Horizon fog (Iteration 9). Bliss' raymarch has no hard far-cut, so
+    //      toward the horizon the ray reaches the cloud plane at an enormous
+    //      distance and the deck would render out crisply to infinity. Fade the
+    //      cloud alpha to 0 as the cloud-sample distance approaches RV's cloud
+    //      render distance, so the deck dissolves smoothly into the atmospheric
+    //      haze (matching the Unbound / Reimagined styles).
+    float cloudDist = max(float(CloudLayer0_height) - cameraPos.y, 32.0) / max(abs(nPlayerPos.y), 0.05);
+    alpha *= 1.0 - smoothstep(distanceThreshold * BLISS_FOG_START, distanceThreshold * BLISS_FOG_END, cloudDist);
+
     vec4 clouds = vec4(straightColor, alpha);
 
-    // (7) Hand RV a cloud depth for its lightshaft / fog blend. Use the
-    //     altitude of the lowest active layer as a stable approximation.
+    // (7) Hand RV a cloud depth for its lightshaft / fog blend (reuses cloudDist).
     if (alpha > 0.0) {
-        float approxDist = max(float(CloudLayer0_height) - cameraPos.y, 32.0) / max(abs(nPlayerPos.y), 0.05);
-        cloudLinearDepth = min(cloudLinearDepth, clamp(approxDist / far, 0.0, 1.0));
+        cloudLinearDepth = min(cloudLinearDepth, clamp(cloudDist / far, 0.0, 1.0));
     }
 
     return clouds;
