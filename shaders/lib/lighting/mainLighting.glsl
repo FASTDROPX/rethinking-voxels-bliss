@@ -335,6 +335,20 @@ void DoLighting(inout vec4 color, inout vec3 shadowMult, vec3 playerPos, vec3 vi
 
                     cloudSample *= sqrt3(1.0 - abs(EdotL));
                     shadowMult *= 1.0 - 0.85 * cloudSample;
+                #elif defined CLOUDS_BLISS
+                    // Bliss terrain cloud shadows (Iteration 8). Sample a
+                    // Bliss-cell-scale BILLOW coverage (large mass * small cell,
+                    // the same abs() fold the clouds use) so the ground darkens
+                    // under the cumulus cells with cell-sized, moving shadows.
+                    // Texture-based + self-contained, so it compiles in the
+                    // terrain pass without pulling in the full cloud renderer.
+                    vec2 bcsPos = worldPos.xz + worldPos.y * 0.25;
+                    bcsPos.x += syncedTime;
+                    float bLarge = texture2D(noisetex, bcsPos * 0.00006).b;        // ~130-block masses
+                    float bSmall = texture2D(noisetex, bcsPos * 0.0007 + 0.37).b;   // ~22-block cells
+                    float bCov = clamp(abs(bLarge * 2.0 - 1.2) * 0.5 - (1.0 - bSmall) + 0.7, 0.0, 1.0);
+                    bCov *= sqrt3(1.0 - abs(dot(eastVec, lightVec)));               // soften as the sun lowers
+                    shadowMult *= 1.0 - 0.80 * bCov;
                 #else
                     vec2 csPos = worldPos.xz + worldPos.y * 0.25;
                     csPos.x += syncedTime;

@@ -419,3 +419,79 @@ BALANCE / SAFETY CONFIRMATION (Iteration 7)
    - Beer-Lambert accumulation + powder intact; only inputs/shading added : PASS
    - GLSL 1.30 safe (vec3 macro, no new uniforms/globals)                : PASS
 =======================================================================
+
+
+=======================================================================
+ DEBUG ITERATION 8 -- EDGE TRANSPARENCY AND TERRAIN SHADOW FIX
+=======================================================================
+BUG 1 -- DIRTY BLACK OUTLINE ON THIN CLOUDLETS (premultiplied alpha)
+--------------------------------------------------------------------
+Bliss' renderClouds returns a PREMULTIPLIED (associated) colour: the
+front-to-back accumulation
+    COLOR += lighting*(1 - exp(-mult*muE)) * TOTAL_EXTINCTION
+already folds opacity into COLOR, and the alpha it reports is
+1 - TOTAL_EXTINCTION. The correct composite over the sky is therefore
+    result = sky*TOTAL_EXTINCTION + COLOR.
+But RV composites every cloud with
+    color = mix(sky, clouds.rgb, clouds.a) = sky*(1-alpha) + clouds.rgb*alpha
+which expects a STRAIGHT (un-premultiplied) colour. The adapter was handing
+RV the premultiplied COLOR as if it were straight, so a thin edge
+(alpha~0.1) removed ~10% of the sky but added back only COLOR*alpha ~=
+straightColour*alpha^2 of light -- almost nothing. Net: the sky darkened
+with no cloud light filling in = a dark/black silhouette line around faint
+cloudlets.
+
+FIX: un-premultiply in the adapter (the one line that maps Bliss -> RV):
+    alpha         = clamp(1 - raw.a, 0, 1);
+    straightColor = min(raw.rgb / max(alpha, 1e-3), vec3(8.0));  // /alpha (+ firefly clamp)
+    clouds        = vec4(straightColor, alpha);
+Now mix() expands to  sky*(1-alpha) + (COLOR/alpha)*alpha = sky*T + COLOR,
+the correct premultiplied composite. Thin edges fade to clean translucency
+(and thin SUNLIT edges show their silver lining instead of a black rim).
+No lighting/shape constants touched.
+
+BUG 2 -- CLOUD SHADOWS NOT PROJECTING ON TERRAIN
+------------------------------------------------
+Two causes:
+  (a) RV's CLOUD_SHADOWS option is commented out by default in common.glsl
+      -> no terrain cloud shadows at all. Enabled it (#define CLOUD_SHADOWS).
+  (b) With it on, the Bliss style fell through RV's terrain-shadow dispatch
+      into the UNBOUND #else branch, which samples noisetex at scale
+      0.000002*CLOUD_UNBOUND_SIZE_MULT (~5000-block features) -> one nearly
+      uniform shadow patch over the whole visible area = invisible as
+      distinct cloud shadows.
+
+FIX: added a dedicated CLOUDS_BLISS branch to the terrain shadow dispatch in
+lib/lighting/mainLighting.glsl (alongside the REIMAGINED/gaux4 and UNBOUND
+paths). It reproduces the Bliss BILLOW coverage at cloud-cell scale so the
+ground darkens under the cumulus cells with cell-sized, moving shadows:
+    bcsPos = worldPos.xz + worldPos.y*0.25;  bcsPos.x += syncedTime;
+    bLarge = texture(noisetex, bcsPos*0.00006).b;   // ~130-block masses
+    bSmall = texture(noisetex, bcsPos*0.0007 +0.37).b; // ~22-block cells
+    bCov   = clamp(abs(bLarge*2-1.2)*0.5 - (1-bSmall) + 0.7, 0,1); // billow
+    bCov  *= sqrt3(1 - abs(dot(eastVec,lightVec)));  // soften near horizon
+    shadowMult *= 1 - 0.80*bCov;
+This is texture-based and self-contained (uses only worldPos, syncedTime,
+noisetex, eastVec, lightVec -- all already present in every program that
+includes mainLighting), so it compiles in the terrain/gbuffers passes
+WITHOUT pulling the full cloud renderer (and its cloudColors/sky includes)
+into them, which would have caused duplicate-symbol errors. It is a
+Bliss-scale APPROXIMATION of the deck (same billow + cell sizes), not a
+literal sample of the deferred density field; a literal sample would need
+a guarded shadow-only include of the density functions in every terrain
+program and is deferred to avoid an untestable cross-program include.
+
+PRESERVED (per instruction): the Iteration 6 billow shape constants and the
+Iteration 7 lighting/radiance tunables are untouched. Only the adapter's
+alpha mapping, the CLOUD_SHADOWS default, and a new terrain-shadow branch
+changed.
+
+BALANCE / SAFETY CONFIRMATION (Iteration 8)
+   - bliss_clouds.glsl  {} () [] == 0 ; #if(32)==#endif(32)              : PASS
+   - mainLighting.glsl  {} () [] == 0 ; #if(88)==#endif(88)              : PASS
+   - common.glsl        {} [] == 0 ; #if(79)==#endif(79) (one-word edit) : PASS
+   - new Bliss shadow branch uses only symbols already in scope
+     (worldPos, syncedTime, noisetex, eastVec, lightVec, sqrt3)          : PASS
+   - eastVec declared under CLOUD_SHADOWS in all terrain programs          : PASS
+   - shape constants + iter-7 lighting tunables unchanged                 : PASS
+=======================================================================

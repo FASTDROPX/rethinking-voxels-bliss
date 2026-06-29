@@ -884,10 +884,17 @@ vec4 GetVolumetricClouds(int cloudAltitude, float distanceThreshold, inout float
     vec3 cloudDepth = vec3(0.0);
     vec4 raw = bliss_renderClouds(FragPosition, Dither, LightColor, SkyColor, cloudDepth);
 
-    // (6) Bliss returns vec4(scattered_colour, transmittance);
-    //     RV wants  vec4(colour, alpha).  alpha = 1 - transmittance.
+    // (6) Bliss returns vec4(PREMULTIPLIED scattered colour, transmittance).
+    //     RV composites clouds with  mix(sky, rgb, alpha) = sky*(1-alpha)+rgb*alpha,
+    //     which expects a STRAIGHT (un-premultiplied) colour. Passing Bliss'
+    //     premultiplied colour straight made thin edges darken the sky by alpha
+    //     while adding back only colour*alpha (~alpha^2) of light -> the dirty
+    //     black outline on faint cloudlets. Un-premultiply (colour / alpha) so
+    //     mix() reproduces the correct  sky*transmittance + premultColour  and
+    //     low-density edges fade to clean translucency.
     float alpha = clamp(1.0 - raw.a, 0.0, 1.0);
-    vec4 clouds = vec4(raw.rgb, alpha);
+    vec3 straightColor = min(raw.rgb / max(alpha, 1e-3), vec3(8.0)); // /alpha + firefly clamp
+    vec4 clouds = vec4(straightColor, alpha);
 
     // (7) Hand RV a cloud depth for its lightshaft / fog blend. Use the
     //     altitude of the lowest active layer as a stable approximation.
