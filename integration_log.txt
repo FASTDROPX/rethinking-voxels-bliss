@@ -641,3 +641,91 @@ BALANCE / SAFETY CONFIRMATION (Iteration 10)
    - iter 8/9 features (shadows, clear scale, speed sync, fog) intact       : PASS
    - GLSL 1.30 safe; no global-initializer user-function calls added        : PASS
 =======================================================================
+
+
+=======================================================================
+DEBUG ITERATION 11 -- PRODUCTION INTEGRATION OF THE ECLIPSE FEEDBACK
+                        EASING SYSTEM (GATED, REAL CODE, SAFE DEFAULT)
+=======================================================================
+Scope: turn the Iteration 10 time-interpolation FRAMEWORK into a real,
+wired feedback system -- behind a master toggle that ships OFF, so the
+default pack stays byte-identical to Iteration 10 while the cinematic
+path is fully present and one #define away from active.
+
+DESIGN DECISION -- EASE THE SUN VECTOR, NOT A SCALAR CLOCK
+----------------------------------------------------------
+A smoothed tick-count would force us to re-derive all celestial math from
+a fake time and risk wrap/day-boundary errors. Instead we ease the
+WORLD-SPACE SUN DIRECTION directly: one persistent texel stores the
+already-smoothed sun, and the cloud lighting just reads it. Robust across
+midnight, day rollovers and sunPathRotation, and it touches only the
+cloud-light domain (the safe place to intervene).
+
+WIRING (all gated by  #define ECLIPSE_TIME_ACTIVE , OFF by default)
+-------------------------------------------------------------------
+  * common.glsl
+      - Master toggle  //#define ECLIPSE_TIME_ACTIVE  (Cloud Settings screen,
+        OFF). TIME_TRANSITION_SPEED slider retained (default 1.2 s).
+  * lib/pipelineSettings.glsl
+      - Gated, REAL code (outside the commented format block):
+            const int  colortex15Format = RGBA32F;
+            const bool colortex15Clear  = false;   // persistent feedback texel
+        Parsed from composite6 + final (the two passes that include
+        pipelineSettings), both of which include common.glsl first, so the
+        toggle is in scope.
+  * lib/uniforms.glsl
+      - Gated  uniform sampler2D colortex15;  (the feedback texel).
+  * program/composite7.glsl   [THE UPDATE PASS]
+      - Gated  /* RENDERTARGETS:3,15 */  (else the untouched DRAWBUFFERS:3).
+      - Recomputes the REAL sun with the exact GetSunVector overworld math
+        (timeAngle + sunPathRotation -> view -> world), reads last frame's
+        stored sun from colortex15, and steps it toward the real sun by
+            ew = 1 - exp(-dt / TIME_TRANSITION_SPEED)
+        where dt = frameTimeCounter - storedFrameTime. Seeds itself on the
+        first frame (no pop), snaps on frameTimeCounter wrap / absurd gaps,
+        re-normalises, and stores vec4(smoothedSun, frameTimeCounter).
+        Non-overworld dims write vec4(0) (cloud reader falls back to real sun).
+  * lib/misc/timeInterpolation.glsl
+      - Easing helpers retained (exp-out, exact). READ INTERFACE reworked:
+        bliss_GetVisualWorldTime()/...TimeFract() now ALWAYS return real time
+        in BOTH modes (link-safe: no forward-decl-without-definition), and the
+        active channel is the new
+            vec3 bliss_GetVisualSunVec(vec3 realSunVecWorld)
+        ON: returns the eased sun from colortex15 (real-sun fallback if the
+        texel is unseeded/degenerate). OFF: identity.
+  * lib/atmospherics/clouds/bliss_clouds.glsl  [THE READER]
+      - Adapter routes the cloud light direction through bliss_GetVisualSunVec
+        when ON (and takes sunElevation from the SAME smoothed vector so the
+        day/night flip eases in step). The OFF branch (#else) is the verbatim
+        Iteration 10 two lines, so OFF is byte-identical.
+  * shaders.properties / lang/en_US.lang
+      - ECLIPSE_TIME_ACTIVE added to the Cloud Settings screen with a full
+        tooltip; TIME_TRANSITION_SPEED tooltip updated (it now gates on the
+        master switch). No slider-list change (boolean toggle).
+
+BEHAVIOUR
+---------
+  OFF (default): clouds light from the real sun exactly as Iteration 10. No
+  extra buffer is allocated, no extra render target, no extra sampler. The
+  pack is byte-identical.
+  ON: a single persistent texel remembers the sun. During normal play the
+  real sun barely moves so the lag is invisible; on a time JUMP (/time set,
+  sleeping, plugins) the cloud lighting glides across the gap over
+  ~TIME_TRANSITION_SPEED seconds with an exponential-out curve instead of
+  snapping. 1-frame feedback latency (deferred reads last frame's composite7
+  write) -- negligible against a >1 s easing.
+
+PRESERVED (per protocol): Iteration 10 bliss_quintic altostratus edge fix;
+Iteration 9 clear-weather 0.5x coverage + GUI cloud-speed sync + horizon fog;
+Iteration 8 terrain cloud shadows + un-premultiplied alpha; Iteration 6/7
+billow shape + radiance. None were touched -- every change is gated.
+
+BALANCE / SAFETY CONFIRMATION (Iteration 11)
+   - All new code paths gated by ECLIPSE_TIME_ACTIVE; OFF == Iteration 10     : PASS
+   - composite7 feedback math mirrors GetSunVector (overworld) exactly        : PASS
+   - bliss_GetVisualWorldTime() defined in BOTH modes (no dangling proto)     : PASS
+   - colortex15: RGBA32F + persistent, declared as real (non-comment) code    : PASS
+   - colortex15 sampler in scope wherever bliss_GetVisualSunVec compiles      : PASS
+   - day/night flip uses the smoothed vector's elevation (no desync)          : PASS
+   - GLSL 1.30/430-compat safe; const vec2 sun-rot mirrors RV's own pattern   : PASS
+=======================================================================

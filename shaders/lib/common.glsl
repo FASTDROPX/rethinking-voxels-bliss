@@ -156,6 +156,14 @@
     // the Eclipse-style smooth time system (lib/misc/timeInterpolation.glsl).
     // 0.0 = instant (off). See the module header for the activation hooks.
     #define TIME_TRANSITION_SPEED 1.2 //[0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4 1.6 1.8 2.0 2.5 3.0 4.0 5.0 7.0 10.0]
+    // Iteration 11: master switch for the Eclipse-style cinematic smooth time.
+    // OFF by default (the pack is byte-identical to Iteration 10 when off). When
+    // ON, a colortex15 feedback buffer (maintained in composite7) eases the
+    // world sun vector toward the real time over TIME_TRANSITION_SPEED seconds,
+    // and the Bliss cloud lighting follows it (sun/cloud relight smoothly on
+    // /time set, sleeping, time plugins). NOTE: this path is not compile-tested
+    // on a live Iris build -- if the pack fails to load with it ON, turn it OFF.
+    //#define ECLIPSE_TIME_ACTIVE
     #define CLOUD_R 100 //[25 30 35 40 45 50 55 60 65 70 75 80 85 90 95 100 110 120 130 140 150 160 170 180 190 200 220 240 260 280 300]
     #define CLOUD_G 100 //[25 30 35 40 45 50 55 60 65 70 75 80 85 90 95 100 110 120 130 140 150 160 170 180 190 200 220 240 260 280 300]
     #define CLOUD_B 100 //[25 30 35 40 45 50 55 60 65 70 75 80 85 90 95 100 110 120 130 140 150 160 170 180 190 200 220 240 260 280 300]

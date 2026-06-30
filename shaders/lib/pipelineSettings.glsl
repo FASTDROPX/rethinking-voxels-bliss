@@ -38,6 +38,18 @@ const bool colortex14Clear = false;
 
 const bool shadowcolor2Clear = false;
 
+// --- Eclipse cinematic time interpolation (Iteration 11) -------------------
+// colortex15 holds ONE persistent texel: the smoothed world-space sun vector
+// in .rgb and last frame's frameTimeCounter in .a (see composite7 feedback +
+// lib/misc/timeInterpolation.glsl). RGBA32F so the sun direction and the
+// second timer keep full float precision; persistent (not cleared) so the
+// feedback survives between frames. Gated -- absent unless the system is on,
+// keeping the default pack byte-identical.
+#ifdef ECLIPSE_TIME_ACTIVE
+    const int  colortex15Format = RGBA32F;
+    const bool colortex15Clear  = false;
+#endif
+
 const int noiseTextureResolution = 128;
 
 const bool shadowHardwareFiltering = true;

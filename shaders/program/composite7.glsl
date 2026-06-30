@@ -63,8 +63,48 @@ void main() {
             // + 0.2 * normal + 0.2;
 
     }*/
+#ifdef ECLIPSE_TIME_ACTIVE
+    /* RENDERTARGETS:3,15 */
+#else
     /* DRAWBUFFERS:3 */
+#endif
     gl_FragData[0] = vec4(color, 1.0);
+
+#ifdef ECLIPSE_TIME_ACTIVE
+    // ---- Eclipse cinematic time interpolation: feedback update -----------
+    // One persistent texel (colortex15) remembers the smoothed world-space sun
+    // vector. Each frame we recompute the REAL sun (same math as GetSunVector,
+    // overworld branch) and ease the stored vector toward it with an
+    // exponential-out step of time-constant TIME_TRANSITION_SPEED seconds.
+    // During normal play the real sun barely moves so the lag is invisible;
+    // when worldTime JUMPS (/time set, sleeping, plugins) the stored sun eases
+    // across the gap over ~TIME_TRANSITION_SPEED s instead of snapping. The
+    // cloud lighting reads this smoothed sun via bliss_GetVisualSunVec().
+    vec3 newSun;
+    #ifdef OVERWORLD
+        const vec2 spr = vec2(cos(sunPathRotation * 0.01745329251994), -sin(sunPathRotation * 0.01745329251994));
+        float sang = fract(timeAngle - 0.25);
+        sang = (sang + (cos(sang * 3.14159265358979) * -0.5 + 0.5 - sang) / 3.0) * 6.28318530717959;
+        vec3 sunView = normalize((gbufferModelView * vec4(vec3(-sin(sang), cos(sang) * spr) * 2000.0, 1.0)).xyz);
+        vec3 realSun = normalize(mat3(gbufferModelViewInverse) * sunView);
+
+        vec4 prevState = texelFetch(colortex15, ivec2(0), 0);
+        vec3 storedSun = prevState.rgb;
+        float lastFrame = prevState.a;
+        // First frame / uninitialised texel: seed with the real sun (no pop).
+        if (!(dot(storedSun, storedSun) > 0.25)) storedSun = realSun;
+        // Per-frame dt in seconds. frameTimeCounter wraps (~hourly) and resets
+        // on load; a non-positive or absurd gap means "no easing this frame".
+        float edt = frameTimeCounter - lastFrame;
+        if (!(edt > 0.0 && edt < 60.0)) edt = 0.0;
+        float ew = clamp(1.0 - exp(-edt / max(TIME_TRANSITION_SPEED, 0.0001)), 0.0, 1.0);
+        newSun = mix(storedSun, realSun, ew);
+        newSun = (dot(newSun, newSun) > 1e-6) ? normalize(newSun) : realSun;
+    #else
+        newSun = vec3(0.0);
+    #endif
+    gl_FragData[1] = vec4(newSun, frameTimeCounter);
+#endif
 }
 
 #endif

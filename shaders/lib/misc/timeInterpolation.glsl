@@ -80,22 +80,36 @@ vec3 eclipseAdvanceVec(vec3 storedVisual, vec3 target, float dt){
 }
 
 // ---------------------------------------------------------------------
-//  READ INTERFACE  (safe fallback = real time until the buffer is wired)
+//  READ INTERFACE
 // ---------------------------------------------------------------------
-#ifdef ECLIPSE_TIME_ACTIVE
-	// [HOOK] When the feedback buffer is wired, return the smoothed visual
-	// time (unwrapped ticks) read from the persistent texel. Provided by the
-	// pipeline's [UPDATE] pass; declared here so consumers can compile.
-	float bliss_GetVisualWorldTime();
-#else
-	// Non-breaking fallback: the real, un-smoothed game time.
-	float bliss_GetVisualWorldTime(){ return float(worldDay) * 24000.0 + float(worldTime); }
-#endif
+//  The cinematic easing is delivered through the SUN VECTOR, not through a
+//  smoothed scalar clock. Easing a vector (instead of re-deriving celestial
+//  math from a smoothed tick count) keeps the transition robust: the
+//  feedback texel stores the already-eased world-space sun direction, and
+//  consumers simply read it. The scalar time accessors below stay as the
+//  real game time in BOTH modes so they are always defined and link-safe.
+float bliss_GetVisualWorldTime(){ return float(worldDay) * 24000.0 + float(worldTime); }
 
-// Convenience: visual time-of-day phase in [0,1) (0 = sunrise reference),
-// for sky-gradient / sun-angle consumers that want a normalized angle.
+// Convenience: visual time-of-day phase in [0,1) (0 = sunrise reference).
 float bliss_GetVisualTimeFract(){
 	return fract(bliss_GetVisualWorldTime() / 24000.0);
 }
+
+// ---------------------------------------------------------------------
+//  SMOOTHED SUN  (the active cinematic channel)
+// ---------------------------------------------------------------------
+//  Returns the world-space sun direction the sky/cloud lighting should use.
+//   - ECLIPSE_TIME_ACTIVE off: identity -> the real sun, byte-identical pack.
+//   - on: the eased sun from colortex15.rgb (written by composite7's feedback
+//     pass). Falls back to the real sun until the texel is seeded, and if the
+//     stored vector is ever degenerate, so it can never go dark.
+#ifdef ECLIPSE_TIME_ACTIVE
+	vec3 bliss_GetVisualSunVec(vec3 realSunVecWorld){
+		vec3 s = texelFetch(colortex15, ivec2(0), 0).rgb;
+		return (dot(s, s) > 0.25) ? normalize(s) : realSunVecWorld;
+	}
+#else
+	vec3 bliss_GetVisualSunVec(vec3 realSunVecWorld){ return realSunVecWorld; }
+#endif
 
 #endif // BLISS_TIME_INTERP_GLSL
