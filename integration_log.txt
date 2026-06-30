@@ -729,3 +729,81 @@ BALANCE / SAFETY CONFIRMATION (Iteration 11)
    - day/night flip uses the smoothed vector's elevation (no desync)          : PASS
    - GLSL 1.30/430-compat safe; const vec2 sun-rot mirrors RV's own pattern   : PASS
 =======================================================================
+
+
+=======================================================================
+DEBUG ITERATION 12 -- SOLVED colortex15 FORMAT TOKEN CRASH AND
+                        RELOCATED INTERP CONTROLS TO PERFORMANCE MENU
+=======================================================================
+Symptom (reported): enabling ECLIPSE_TIME_ACTIVE crashed compilation with
+    composite6.fsh: 0(370) : error C1503: undefined variable "RGBA32F"
+and the pipeline fell back to vanilla graphics.
+
+ROOT CAUSE
+----------
+This pack declares NO colortexNFormat constants -- the entire format block in
+lib/pipelineSettings.glsl is commented out and RV runs on the host's DEFAULT
+buffer formats (the only active format declarations anywhere are the image.*
+compute buffers in shaders.properties). The Iteration 11 line
+    const int colortex15Format = RGBA32F;
+was therefore NOT consumed by the pipeline's format parser; it survived into
+the generated GLSL of every pass that includes pipelineSettings (composite6,
+final), where the driver hit the bare identifier RGBA32F and aborted -- taking
+the whole pipeline down to vanilla. Lower-casing the token would not help: the
+token is undefined to the GLSL compiler either way; the directive simply is
+not part of this pack's pipeline contract.
+
+FIX 1 -- REMOVE THE FORMAT DECLARATION, ENCODE TO SURVIVE THE DEFAULT FORMAT
+---------------------------------------------------------------------------
+colortex15 is now left on its default format (and is already persistent --
+Iris/OptiFine keep colortex8-15 uncleared by default, exactly what a feedback
+texel needs), so NO colortexNFormat / Clear constant is declared at all. The
+feedback instead stores its sun direction robustly for any default format:
+  * composite7 writes  vec4(sun * 0.5 + 0.5, 1.0)  -- the unit sun ENCODED into
+    [0,1] (survives an 8-bit/unsigned default) with a "seeded" flag in .a.
+  * the dt for the easing now comes from the  frameTime  uniform (real
+    per-frame delta, seconds) instead of a stored frameTimeCounter, so the
+    alpha channel is free for the seeded flag and there is no wrap handling.
+  * NORMAL PLAY tracks the real sun EXACTLY (the writer snaps when the real sun
+    is within ~2 deg of the stored sun; the reader returns the real sun in that
+    regime), so there is zero lag and zero low-precision stepping during
+    ordinary time-of-day movement. Only a JUMP (>~2 deg gap, i.e. /time set,
+    sleeping, plugins) triggers the exponential-out ease; the reader returns
+    the eased stored sun until it re-converges, then hands back the real sun.
+  * bliss_GetVisualSunVec() decodes [0,1] -> [-1,1], normalises, and falls back
+    to the real sun whenever the texel is unseeded or degenerate, so the cloud
+    lighting can never go dark.
+Net: compiles on both OptiFine and Iris (no exotic tokens, no custom formats),
+smooth at the default speed, and graceful if the default buffer is low
+precision. When ECLIPSE_TIME_ACTIVE is OFF the pack remains byte-identical --
+no buffer, sampler, render target, or directive is added.
+
+FIX 2 -- RELOCATE CONTROLS TO PERFORMANCE, RESTORE THE CLOUDS MENU
+------------------------------------------------------------------
+  * shaders.properties: removed TIME_TRANSITION_SPEED + ECLIPSE_TIME_ACTIVE
+    from screen.CLOUD_SETTINGS (now back to its original clean layout) and
+    appended both to screen.PERFORMANCE_SETTINGS, where pipeline/system tweaks
+    live. TIME_TRANSITION_SPEED stays registered in the sliders= list (that
+    only declares the widget type, not its menu location).
+  * en_US.lang: tooltips updated to point at the Performance screen and to drop
+    the obsolete "reserves a full-precision buffer" note (none is reserved now).
+  * common.glsl: master-switch comment updated (Iteration 12, crash fixed).
+
+PRESERVED (per protocol): the internal mathematical architecture is intact --
+the conditional colortex15 sampling/feedback pass in composite7 and the sun-
+vector advection routed through bliss_clouds.glsl's adapter are unchanged in
+intent; only the storage encoding and the dt source were hardened. Iteration
+10 altostratus edge, Iteration 9 clear-weather coverage + speed sync + horizon
+fog, Iteration 8 terrain shadows + un-premultiply, Iteration 6/7 billow +
+radiance: all untouched (every change remains gated behind ECLIPSE_TIME_ACTIVE).
+
+BALANCE / SAFETY CONFIRMATION (Iteration 12)
+   - no colortexNFormat / RGBA32F token anywhere -> C1503 crash removed        : PASS
+   - colortex15 used on default format; persistent by Iris default            : PASS
+   - sun encoded to [0,1] + .a seeded flag -> survives 8-bit/unsigned default  : PASS
+   - frameTime drives dt; no frameTimeCounter wrap edge cases                  : PASS
+   - normal play returns real sun (no lag/stepping); only jumps ease           : PASS
+   - reader falls back to real sun on unseeded/degenerate texel (never dark)   : PASS
+   - controls moved to Performance; Cloud Settings restored to original        : PASS
+   - OFF path still byte-identical (all changes gated)                         : PASS
+=======================================================================

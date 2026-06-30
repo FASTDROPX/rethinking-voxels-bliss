@@ -72,15 +72,17 @@ void main() {
 
 #ifdef ECLIPSE_TIME_ACTIVE
     // ---- Eclipse cinematic time interpolation: feedback update -----------
-    // One persistent texel (colortex15) remembers the smoothed world-space sun
-    // vector. Each frame we recompute the REAL sun (same math as GetSunVector,
-    // overworld branch) and ease the stored vector toward it with an
-    // exponential-out step of time-constant TIME_TRANSITION_SPEED seconds.
-    // During normal play the real sun barely moves so the lag is invisible;
-    // when worldTime JUMPS (/time set, sleeping, plugins) the stored sun eases
-    // across the gap over ~TIME_TRANSITION_SPEED s instead of snapping. The
-    // cloud lighting reads this smoothed sun via bliss_GetVisualSunVec().
-    vec3 newSun;
+    // colortex15 holds ONE persistent texel: the smoothed world-space sun,
+    // ENCODED to [0,1] (.rgb) with a "seeded" flag in .a so it survives the
+    // buffer's default format (this pack declares no custom colortexN format).
+    // Each frame we recompute the REAL sun (same math as GetSunVector,
+    // overworld branch). During normal play the stored sun tracks the real sun
+    // EXACTLY (no lag, no low-precision stepping); only when worldTime JUMPS
+    // (/time set, sleeping, plugins) -- i.e. the real sun is >~2 deg off the
+    // stored sun -- do we EASE across the gap with an exponential-out step of
+    // time-constant TIME_TRANSITION_SPEED seconds. frameTime is the real
+    // per-frame delta, so the easing is frame-rate independent.
+    vec4 sunState;
     #ifdef OVERWORLD
         const vec2 spr = vec2(cos(sunPathRotation * 0.01745329251994), -sin(sunPathRotation * 0.01745329251994));
         float sang = fract(timeAngle - 0.25);
@@ -88,22 +90,24 @@ void main() {
         vec3 sunView = normalize((gbufferModelView * vec4(vec3(-sin(sang), cos(sang) * spr) * 2000.0, 1.0)).xyz);
         vec3 realSun = normalize(mat3(gbufferModelViewInverse) * sunView);
 
-        vec4 prevState = texelFetch(colortex15, ivec2(0), 0);
-        vec3 storedSun = prevState.rgb;
-        float lastFrame = prevState.a;
-        // First frame / uninitialised texel: seed with the real sun (no pop).
-        if (!(dot(storedSun, storedSun) > 0.25)) storedSun = realSun;
-        // Per-frame dt in seconds. frameTimeCounter wraps (~hourly) and resets
-        // on load; a non-positive or absurd gap means "no easing this frame".
-        float edt = frameTimeCounter - lastFrame;
-        if (!(edt > 0.0 && edt < 60.0)) edt = 0.0;
-        float ew = clamp(1.0 - exp(-edt / max(TIME_TRANSITION_SPEED, 0.0001)), 0.0, 1.0);
-        newSun = mix(storedSun, realSun, ew);
+        vec4 prev = texelFetch(colortex15, ivec2(0), 0);
+        // Decode the previous smoothed sun, or seed with the real sun on the
+        // first frame / uninitialised texel (.a flag clear) so there is no pop.
+        vec3 storedSun = (prev.a > 0.5) ? normalize(prev.rgb * 2.0 - 1.0) : realSun;
+
+        // aligned > cos(~2 deg): normal drift -> snap (track real exactly).
+        // below: a jump (or mid-transition) -> exponential-out ease.
+        float aligned = dot(storedSun, realSun);
+        float ew = (aligned > 0.9994) ? 1.0
+                 : clamp(1.0 - exp(-frameTime / max(TIME_TRANSITION_SPEED, 0.0001)), 0.0, 1.0);
+        vec3 newSun = mix(storedSun, realSun, ew);
         newSun = (dot(newSun, newSun) > 1e-6) ? normalize(newSun) : realSun;
+
+        sunState = vec4(newSun * 0.5 + 0.5, 1.0); // encode to [0,1] + seeded flag
     #else
-        newSun = vec3(0.0);
+        sunState = vec4(0.0);                     // non-overworld: mark unseeded
     #endif
-    gl_FragData[1] = vec4(newSun, frameTimeCounter);
+    gl_FragData[1] = sunState;
 #endif
 }
 

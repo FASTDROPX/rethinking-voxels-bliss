@@ -38,17 +38,18 @@ const bool colortex14Clear = false;
 
 const bool shadowcolor2Clear = false;
 
-// --- Eclipse cinematic time interpolation (Iteration 11) -------------------
-// colortex15 holds ONE persistent texel: the smoothed world-space sun vector
-// in .rgb and last frame's frameTimeCounter in .a (see composite7 feedback +
-// lib/misc/timeInterpolation.glsl). RGBA32F so the sun direction and the
-// second timer keep full float precision; persistent (not cleared) so the
-// feedback survives between frames. Gated -- absent unless the system is on,
-// keeping the default pack byte-identical.
-#ifdef ECLIPSE_TIME_ACTIVE
-    const int  colortex15Format = RGBA32F;
-    const bool colortex15Clear  = false;
-#endif
+// --- Eclipse cinematic time interpolation (Iteration 12) -------------------
+// The Eclipse feedback (composite7) stores its smoothed sun in colortex15.
+// This pack deliberately declares NO colortexNFormat constants -- the whole
+// format block above is commented out and RV runs on Iris' default buffer
+// formats. A "colortex15Format = <token>" declaration is therefore NOT
+// consumed by the pipeline parser here and instead leaks the bare format
+// token into the GLSL, which the driver rejects ("undefined variable", the
+// Iteration 11 crash). So colortex15 is left on the DEFAULT format, and the
+// feedback ENCODES its sun direction into [0,1] with a validity flag in .a so
+// it survives whatever that default is. colortex15 is also not cleared by
+// default (Iris keeps colortex8-15 persistent), exactly what the feedback
+// needs -- no extra declaration required.
 
 const int noiseTextureResolution = 128;
 
