@@ -167,6 +167,17 @@
     // sky/terrain passes (and the vanilla sun/moon/star sprites + Iris shadow
     // map) stay on real time and still snap -- this is the clouds-scoped path.
     //#define ECLIPSE_TIME_ACTIVE
+    // GUI-detection anchor (Iteration 20): Iris/OptiFine only renders a boolean
+    // option's checkbox if the option name appears in a SIMPLE #ifdef/#ifndef.
+    // The Eclipse feature is gated by compound "#if defined ECLIPSE_TIME_ACTIVE
+    // && __VERSION__ >= 430" blocks, which the option scanner does NOT count as a
+    // usage -- so the toggle was missing from Performance Settings. This empty
+    // simple #ifdef is the usage the scanner needs; it changes no behaviour and
+    // leaves the Iteration 19 easing math untouched.
+    #ifdef ECLIPSE_TIME_ACTIVE
+        #define ECLIPSE_TIME_ACTIVE_ENABLED // harmless marker; presence of this
+        // simple #ifdef is what makes the toggle appear in the menu.
+    #endif
     #define CLOUD_R 100 //[25 30 35 40 45 50 55 60 65 70 75 80 85 90 95 100 110 120 130 140 150 160 170 180 190 200 220 240 260 280 300]
     #define CLOUD_G 100 //[25 30 35 40 45 50 55 60 65 70 75 80 85 90 95 100 110 120 130 140 150 160 170 180 190 200 220 240 260 280 300]
     #define CLOUD_B 100 //[25 30 35 40 45 50 55 60 65 70 75 80 85 90 95 100 110 120 130 140 150 160 170 180 190 200 220 240 260 280 300]

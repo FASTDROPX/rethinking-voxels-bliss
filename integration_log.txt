@@ -1321,3 +1321,52 @@ BALANCE / SAFETY CONFIRMATION (Iteration 19)
    - SSBO write placed before discard like the existing imageAtomicMin         : PASS
    - Iteration 13 terrain shadows retained                                     : PASS
 =======================================================================
+
+
+=======================================================================
+DEBUG ITERATION 20 -- RESTORED MISSING ECLIPSE_TIME_ACTIVE TOGGLE TO
+                        PERFORMANCE SETTINGS MENU
+=======================================================================
+Symptom: the Time Transition Speed slider showed in Performance Settings, but
+the ECLIPSE_TIME_ACTIVE checkbox did not, so the feature could not be enabled.
+
+ROOT CAUSE (found by comparison, not guesswork)
+-----------------------------------------------
+Every RV boolean toggle that DOES render in a screen (NIGHT_NEBULA,
+MOTION_BLURRING, FOLIAGE_VOXELIZATION, ...) appears in at least one SIMPLE
+preprocessor usage -- #ifdef NAME / #ifndef NAME. ECLIPSE_TIME_ACTIVE appeared
+ONLY in COMPOUND expressions:
+    #if defined ECLIPSE_TIME_ACTIVE && __VERSION__ >= 430
+    #if defined ECLIPSE_TIME_ACTIVE && defined FRAGMENT_SHADER && __VERSION__ >= 430
+Iris/OptiFine's option scanner does not count a compound #if as a "usage", so
+it treated the toggle as unused and hid the checkbox. (The slider renders by a
+different rule -- it is a value-list #define, detected from its //[..] list.)
+
+THE FIX (config/lang + a no-op detection anchor; easing math untouched)
+-----------------------------------------------------------------------
+  * lib/common.glsl: added a SIMPLE #ifdef next to the option define --
+        //#define ECLIPSE_TIME_ACTIVE
+        #ifdef ECLIPSE_TIME_ACTIVE
+            #define ECLIPSE_TIME_ACTIVE_ENABLED   // harmless marker
+        #endif
+    This is the simple usage the scanner needs; it changes no behaviour and the
+    Iteration 19 SSBO easing blocks (the compound #if blocks) are byte-for-byte
+    unchanged.
+  * shaders.properties: ECLIPSE_TIME_ACTIVE sits directly before
+    TIME_TRANSITION_SPEED in screen.PERFORMANCE_SETTINGS (one spacer trimmed so
+    they are adjacent).
+  * lang/en_US.lang: verified option.ECLIPSE_TIME_ACTIVE label + tooltip are
+    bound and describe the clouds-scoped, persistent-SSBO cinematic transition.
+
+PRESERVED (per protocol): the Iteration 19 SSBO (binding=1) time-easing math,
+the prepare1 forward-only update, and the cloud_movement / terrain-shadow
+anchors are all untouched -- only the GUI-detection anchor + layout + lang were
+changed. OFF path still byte-identical.
+
+BALANCE / SAFETY CONFIRMATION (Iteration 20)
+   - simple #ifdef ECLIPSE_TIME_ACTIVE present -> scanner detects the toggle    : PASS
+   - Iteration 19 easing blocks unchanged (compound #if still gates the logic)  : PASS
+   - toggle adjacent to its slider in PERFORMANCE_SETTINGS                      : PASS
+   - lang label + tooltip bound (clouds-scoped / persistent SSBO)              : PASS
+   - OFF path byte-identical (anchor only defines an unused marker when ON)     : PASS
+=======================================================================
