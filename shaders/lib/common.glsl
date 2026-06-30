@@ -152,22 +152,20 @@
     #define CLOUD_CLOSED_AREA_CHECK
     #define CLOUD_ALT1 192 //[-96 -92 -88 -84 -80 -76 -72 -68 -64 -60 -56 -52 -48 -44 -40 -36 -32 -28 -24 -20 -16 -10 -8 -4 0 4 8 12 16 20 22 24 28 32 36 40 44 48 52 56 60 64 68 72 76 80 84 88 92 96 100 104 108 112 116 120 124 128 132 136 140 144 148 152 156 160 164 168 172 176 180 184 188 192 196 200 204 208 212 216 220 224 228 232 236 240 244 248 252 256 260 264 268 272 276 280 284 288 292 296 300 304 308 312 316 320 324 328 332 336 340 344 348 352 356 360 364 368 372 376 380 384 388 392 396 400 404 408 412 416 420 424 428 432 436 440 444 448 452 456 460 464 468 472 476 480 484 488 492 496 500 510 520 530 540 550 560 570 580 590 600 610 620 630 640 650 660 670 680 690 700 710 720 730 740 750 760 770 780 790 800]
     #define CLOUD_SPEED_MULT 100 //[0 5 7 10 15 20 25 30 35 40 45 50 55 60 65 70 75 80 85 90 95 100 110 120 130 140 150 160 170 180 190 200 220 240 260 280 300 325 350 375 400 425 450 475 500 550 600 650 700 750 800 850 900]
-    // Time-transition reference duration, in SECONDS. NOTE (Iteration 18): the
-    // system is now BUFFERLESS. Smoothing a time JUMP needs per-frame memory,
-    // which is unavailable (colortex is cleared by this Iris, SSBO is 430-only,
-    // the smooth uniforms do not exist), so there is no stateful glide for this
-    // slider to drive -- the sky/sun snaps. Kept only for the tooltip and for if
-    // a working persistent buffer ever becomes available.
+    // Cinematic time-transition glide duration, in SECONDS. Iteration 19: the
+    // ease is computed in prepare1 as ew = 1 - exp(-frameTime/TIME_TRANSITION_
+    // SPEED), so THIS slider drives the glide duration. Larger = slower. 0 = off.
     #define TIME_TRANSITION_SPEED 1.2 //[0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4 1.6 1.8 2.0 2.5 3.0 4.0 5.0 7.0 10.0]
     // Master switch (Performance screen). OFF by default (the pack is byte-
-    // identical when off). When ON the only state-free effect is applied: the
-    // cloud advection runs on the continuous frameTimeCounter clock, so the
-    // clouds keep sliding smoothly and do NOT snap/freeze on /time set, bed-sleep
-    // or time plugins. The SKY/SUN still snaps -- easing a time jump requires
-    // remembering the previous frame, and with no persistent buffer that memory
-    // does not exist (an information limit, not a tuning issue). The Iris shadow
-    // map and the vanilla sun/moon/star sprites are also engine-placed from real
-    // time and snap.
+    // identical when off). Iteration 19 (option 4): the eased visual time lives
+    // in a PERSISTENT SSBO (binding=1) -- an SSBO is not cleared between frames,
+    // unlike the colortex this Iris was clearing, so the easing actually holds.
+    // prepare1 (a 430 pass before the clouds) rolls it FORWARD-ONLY toward the
+    // native time; the 430 cloud/deferred passes read it, so the CLOUD LIGHTING
+    // and CLOUD ADVECTION glide and warp forward through midnight on /time set,
+    // bed-sleep or time plugins. SSBOs only exist in 430 passes, so the 130
+    // sky/terrain passes (and the vanilla sun/moon/star sprites + Iris shadow
+    // map) stay on real time and still snap -- this is the clouds-scoped path.
     //#define ECLIPSE_TIME_ACTIVE
     #define CLOUD_R 100 //[25 30 35 40 45 50 55 60 65 70 75 80 85 90 95 100 110 120 130 140 150 160 170 180 190 200 220 240 260 280 300]
     #define CLOUD_G 100 //[25 30 35 40 45 50 55 60 65 70 75 80 85 90 95 100 110 120 130 140 150 160 170 180 190 200 220 240 260 280 300]
@@ -732,6 +730,20 @@
 //Very Common Stuff//
     #include "/lib/uniforms.glsl"
 
+    // Eclipse cinematic time state (Iteration 19, option 4): a small PERSISTENT
+    // SSBO at binding=1 (bufferObject.1). Unlike a colortex, an SSBO is not
+    // cleared between frames, so it can hold the eased visual time. It only
+    // exists in #version 430 passes (the cloud / deferred passes); the 130
+    // sky/terrain passes keep native time. prepare1 (a 430 pass that runs before
+    // deferred) advances blissVisualDaySSBO once per frame; the cloud passes
+    // read it. Gated so OFF (and 130 passes) declare nothing -- byte-identical.
+    #if defined ECLIPSE_TIME_ACTIVE && __VERSION__ >= 430
+      layout(std430, binding = 1) coherent buffer blissTimeBuffer {
+          float blissVisualDaySSBO; // eased visual day position (unwrapped, mod 100)
+          float blissSeedSSBO;      // 0 until seeded, then 1
+      };
+    #endif
+
     #if SHADOW_QUALITY == -1
       float blissNativeTimeAngle = worldTime / 24000.0;
     #else
@@ -744,27 +756,18 @@
       float blissNativeTimeAngle = (tAfrc * (1.0-tAmix) + tAfrs * tAmix + hA) * 0.5;
     #endif
 
-    // ---- Eclipse BUFFERLESS cinematic time (Iteration 18) ----------------
-    // colortex15 is confirmed to be cleared frame-to-frame by the running Iris,
-    // so all cross-frame storage is removed. What remains is the subset that is
-    // achievable with NO per-frame memory:
-    //
-    //  * SKY / SUN: timeAngle stays the NATIVE time. Smoothing a time JUMP
-    //    requires remembering the previous frame to know a jump happened and
-    //    where to ease from; with zero state that information does not exist, so
-    //    a state-free function can only equal the native time or distort it
-    //    every frame. The sun/sky therefore still snaps on /time set -- this is
-    //    an information limit, not a tuning issue. (timeAngle == native here.)
-    //
-    //  * CLOUDS: blissCloudTimeBase is driven by frameTimeCounter, a CONTINUOUS
-    //    real-time clock that never jumps. So the cloud advection no longer
-    //    snaps or freezes on a /time set or bed-sleep -- the clouds keep sliding
-    //    smoothly across the sky. frameTimeCounter*20 matches the normal
-    //    worldTime drift rate (20 ticks/s), so the Cloud Speed sync is kept.
-    //    (This is the only genuinely state-free "warp" available.)
-    #if defined ECLIPSE_TIME_ACTIVE && defined FRAGMENT_SHADER
-      float timeAngle = blissNativeTimeAngle;                 // sky: native (cannot ease state-free)
-      float blissCloudTimeBase = frameTimeCounter * 20.0;     // clouds: continuous, never snaps
+    // ---- Eclipse SSBO-eased cinematic time (Iteration 19, option 4) ------
+    // In the 430 cloud/deferred passes, read the persistent eased visual day
+    // position from the SSBO (advanced FORWARD-ONLY in prepare1). timeAngle =
+    // fract(D) eases the cloud LIGHTING (GetSunVector reads it) and
+    // blissCloudTimeBase = D*24000 eases the cloud ADVECTION -- so on a /time
+    // set the clouds glide and warp forward to the new time. The SKY/SUN and the
+    // 130 terrain passes stay NATIVE (no SSBO there), so they still snap; this is
+    // the clouds-scoped path the user chose. Unseeded -> native (no pop).
+    #if defined ECLIPSE_TIME_ACTIVE && defined FRAGMENT_SHADER && __VERSION__ >= 430
+      float blissVisualDay = (blissSeedSSBO > 0.5) ? blissVisualDaySSBO : blissNativeTimeAngle;
+      float timeAngle = fract(blissVisualDay);
+      float blissCloudTimeBase = blissVisualDay * 24000.0;
     #else
       float timeAngle = blissNativeTimeAngle;
       float blissCloudTimeBase = (worldTime + mod(worldDay, 100) * 24000.0);

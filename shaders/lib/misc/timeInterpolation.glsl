@@ -96,17 +96,17 @@ float bliss_GetVisualTimeFract(){
 }
 
 // ---------------------------------------------------------------------
-//  VISUAL TIME  (Iteration 18: bufferless -- state-free subset only)
+//  VISUAL TIME  (Iteration 19, option 4: persistent SSBO, clouds-scoped)
 // ---------------------------------------------------------------------
-//  colortex15 is confirmed cleared frame-to-frame in the running Iris, so all
-//  cross-frame storage is gone. A time JUMP cannot be SMOOTHED without per-frame
-//  memory (the shader at frame N cannot know the time differed at frame N-1
-//  without something having stored it), so the sky/sun timeAngle stays the
-//  native time and still snaps on /time set -- an information limit, not a bug.
-//  The only state-free effect kept is the cloud advection: lib/common.glsl
-//  drives blissCloudTimeBase from frameTimeCounter (a continuous real-time clock
-//  that never jumps), so the clouds keep sliding smoothly and do not snap or
-//  freeze on a time command. The exp-out helpers below are kept only as
-//  reference for if a working persistent buffer ever becomes available.
+//  A time JUMP cannot be smoothed without per-frame memory, and the colortex
+//  this Iris was clearing could not provide it. The persistent store that DOES
+//  survive frames is an SSBO. So lib/common.glsl declares a small SSBO
+//  (binding=1) holding the eased visual day position D; program/prepare1.glsl
+//  advances it once per frame, FORWARD-ONLY, with ew = 1 - exp(-frameTime /
+//  TIME_TRANSITION_SPEED); and the 430 cloud/deferred passes read it to set
+//  timeAngle = fract(D) (cloud lighting) and blissCloudTimeBase = D*24000 (cloud
+//  advection). SSBOs only exist in 430 passes, so the 130 sky/terrain passes,
+//  the vanilla sun/moon/star sprites and the Iris shadow map stay native and
+//  snap. The exp-out helpers below remain as reference.
 
 #endif // BLISS_TIME_INTERP_GLSL

@@ -16,6 +16,24 @@ layout(r32ui) uniform uimage2D colorimg9;
 #include "/lib/vx/SSBOs.glsl"
 
 void main() {
+#if defined ECLIPSE_TIME_ACTIVE && __VERSION__ >= 430
+    // ---- Eclipse cinematic time: once-per-frame SSBO update (Iteration 19) ----
+    // prepare1 runs before the deferred/cloud passes, so the value written here
+    // is read by the clouds this same frame. One invocation (pixel 0,0) advances
+    // the visual day position D toward the native time, FORWARD ONLY: the gap is
+    // the forward arc round the day, so a backward jump (night -> morning) rolls
+    // through midnight, never rewinds. ew = 1 - exp(-frameTime / TIME_TRANSITION_
+    // SPEED) -> the GUI slider drives the glide. The SSBO persists across frames
+    // (it is not a colortex), which is what makes the easing actually work.
+    if (gl_FragCoord.x < 1.0 && gl_FragCoord.y < 1.0) {
+        float prevDay = (blissSeedSSBO > 0.5) ? blissVisualDaySSBO : blissNativeTimeAngle;
+        float dtv = (frameTime > 0.0 && frameTime < 30.0) ? frameTime : 0.0; // pause/hitch guard
+        float fgap = fract(blissNativeTimeAngle - fract(prevDay));            // forward arc [0,1)
+        float ewv = clamp(1.0 - exp(-dtv / max(TIME_TRANSITION_SPEED, 0.0001)), 0.0, 1.0);
+        blissVisualDaySSBO = mod(prevDay + fgap * ewv, 100.0);
+        blissSeedSSBO = 1.0;
+    }
+#endif
     ivec2 texelCoord = ivec2(gl_FragCoord.xy);
     float prevDepth = texelFetch(colortex1, texelCoord, 0).r;
     vec4 prevClipPos = vec4(gl_FragCoord.xy / view, prevDepth, 1) * 2 - 1;

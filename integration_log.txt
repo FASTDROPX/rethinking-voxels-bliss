@@ -1257,3 +1257,67 @@ BALANCE / SAFETY CONFIRMATION (Iteration 18)
    - composite7 back to single render target; OFF == byte-identical            : PASS
    - Iteration 13 terrain shadows retained                                      : PASS
 =======================================================================
+
+
+=======================================================================
+DEBUG ITERATION 19 -- PERSISTENT SSBO TIME EASING (CLOUDS-SCOPED, OPTION 4)
+=======================================================================
+The user chose option 4: persistent state via an SSBO (the mechanism Eclipse
+uses), scoped to the 430 cloud passes. colortex was confirmed to be cleared
+each frame; an SSBO is NOT cleared between frames, so it can actually hold the
+eased visual time -- this is the key difference that makes the glide work.
+
+ARCHITECTURE
+------------
+  * shaders.properties: bufferObject.1 = 64  (a tiny persistent buffer).
+  * lib/common.glsl (gated ECLIPSE_TIME_ACTIVE && __VERSION__ >= 430):
+        layout(std430, binding = 1) coherent buffer blissTimeBuffer {
+            float blissVisualDaySSBO;   // eased visual day position (mod 100)
+            float blissSeedSSBO;        // 0 until seeded, then 1
+        };
+    SSBOs only exist in #version 430 passes, so this is declared/read ONLY in
+    the deferred/cloud passes; the 130 sky/terrain passes never see it.
+  * program/prepare1.glsl (430, runs BEFORE the deferred/cloud passes): one
+    invocation (pixel 0,0) advances D once per frame --
+        prevD = seeded ? blissVisualDaySSBO : blissNativeTimeAngle
+        fgap  = fract(blissNativeTimeAngle - fract(prevD))   // FORWARD arc
+        ew    = 1 - exp(-frameTime / TIME_TRANSITION_SPEED)   // GUI slider
+        blissVisualDaySSBO = mod(prevD + fgap*ew, 100)
+        blissSeedSSBO = 1
+    The write sits before prepare1's existing discard, exactly like its
+    imageAtomicMin -- side-effect stores before discard are retained (prepare1
+    already relies on this). FORWARD-only => a night->morning jump rolls through
+    midnight, never backward. The slider drives the duration.
+  * lib/common.glsl read (430 fragment): timeAngle = fract(D) eases the cloud
+    LIGHTING (GetSunVector reads timeAngle) and blissCloudTimeBase = D*24000
+    eases the cloud ADVECTION. cloud_movement (bliss_clouds.glsl) and the
+    terrain-shadow advection (mainLighting.glsl) already read blissCloudTimeBase.
+    So on /time set the clouds glide + warp forward to the new time.
+
+WHY THIS CAN WORK WHERE COLORTEX DID NOT: the SSBO persists across frames by
+design (Iris does not clear bufferObjects), and prepare1 runs before the cloud
+read each frame, so the value written is consumed the same frame. The global-
+scope SSBO read mirrors the colortex texelFetch that DID compile in Iterations
+15/17 (it loaded; it just did not persist) -- an SSBO member read is analogous.
+
+SCOPE / HONESTY: the SKY (130 vanilla sky, sun/moon/star sprites) and the Iris
+shadow map stay on real time and still snap -- SSBOs are unavailable in those
+130 passes, and the shadow map / sprites are engine-placed. This is the
+clouds-scoped path the user selected; the 430 deferred atmosphere also eases as
+a bonus since it shares timeAngle.
+
+ALL CHANGES GATED by ECLIPSE_TIME_ACTIVE && __VERSION__>=430 (and the buffer is
+only declared/used then), so OFF and every 130 pass are byte-identical. If a
+driver rejects the 430 SSBO path with the toggle ON, turning it off restores
+stock. Retains Iteration 13 terrain cloud shadows.
+
+BALANCE / SAFETY CONFIRMATION (Iteration 19)
+   - state in a PERSISTENT SSBO (binding=1), not a cleared colortex            : PASS
+   - prepare1 advances it once/frame, before the cloud read                    : PASS
+   - forward-only: gap = fract(native - fract(D)) always advances             : PASS
+   - slider drives the ease: ew = 1 - exp(-frameTime / TIME_TRANSITION_SPEED)  : PASS
+   - cloud lighting (timeAngle) + advection (D*24000) both eased in 430        : PASS
+   - SSBO gated to 430; 130 + OFF paths native -> byte-identical               : PASS
+   - SSBO write placed before discard like the existing imageAtomicMin         : PASS
+   - Iteration 13 terrain shadows retained                                     : PASS
+=======================================================================
