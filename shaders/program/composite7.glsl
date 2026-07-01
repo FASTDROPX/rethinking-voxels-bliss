@@ -65,8 +65,10 @@ void main() {
     }*/
     /* DRAWBUFFERS:3 */
     gl_FragData[0] = vec4(color, 1.0);
-    // Iteration 18: the cinematic-time system is now bufferless (no cross-frame
-    // texel), so this pass writes only its single colour target as in stock.
+    // Iteration 14: the Eclipse cinematic-time easing moved off the fragile
+    // colortex15 feedback texel and onto an engine-maintained smooth() custom
+    // uniform applied globally at the timeAngle root (lib/common.glsl), so this
+    // pass is back to its original single-target form in every configuration.
 }
 
 #endif

@@ -96,17 +96,15 @@ float bliss_GetVisualTimeFract(){
 }
 
 // ---------------------------------------------------------------------
-//  VISUAL TIME  (Iteration 19, option 4: persistent SSBO, clouds-scoped)
+//  SMOOTHED SUN  (Iteration 14: now applied globally, not here)
 // ---------------------------------------------------------------------
-//  A time JUMP cannot be smoothed without per-frame memory, and the colortex
-//  this Iris was clearing could not provide it. The persistent store that DOES
-//  survive frames is an SSBO. So lib/common.glsl declares a small SSBO
-//  (binding=1) holding the eased visual day position D; program/prepare1.glsl
-//  advances it once per frame, FORWARD-ONLY, with ew = 1 - exp(-frameTime /
-//  TIME_TRANSITION_SPEED); and the 430 cloud/deferred passes read it to set
-//  timeAngle = fract(D) (cloud lighting) and blissCloudTimeBase = D*24000 (cloud
-//  advection). SSBOs only exist in 430 passes, so the 130 sky/terrain passes,
-//  the vanilla sun/moon/star sprites and the Iris shadow map stay native and
-//  snap. The exp-out helpers below remain as reference.
+//  The cinematic easing is no longer a self-contained colortex feedback read.
+//  It is applied at the celestial ROOT in lib/common.glsl, where the native
+//  timeAngle is replaced by one reconstructed from the engine-smoothed
+//  blissSunAngleS/C custom uniforms. Every pass then derives its eased
+//  sun/light vector, sky gradient and noon/night factors from that single
+//  override via GetSunVector(), so the whole environment glides together.
+//  This header keeps the exact easing math above as documentation/reference;
+//  no per-consumer sun accessor is needed any more.
 
 #endif // BLISS_TIME_INTERP_GLSL

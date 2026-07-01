@@ -16,9 +16,6 @@ layout(r32ui) uniform uimage2D colorimg9;
 #include "/lib/vx/SSBOs.glsl"
 
 void main() {
-    // Iteration 21: the Mode-1 SSBO time update moved OUT of this pass. prepare1
-    // discards every fragment, which likely dropped the SSBO store (Iter 19 was
-    // static). The update now lives in deferred1 (a no-discard 430 pass).
     ivec2 texelCoord = ivec2(gl_FragCoord.xy);
     float prevDepth = texelFetch(colortex1, texelCoord, 0).r;
     vec4 prevClipPos = vec4(gl_FragCoord.xy / view, prevDepth, 1) * 2 - 1;

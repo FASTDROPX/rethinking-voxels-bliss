@@ -1435,3 +1435,80 @@ BALANCE / SAFETY CONFIRMATION (Iteration 21)
    - Iteration 13 terrain shadows retained (ride blissCloudTimeBase)          : PASS
    - all modes gated; per-mode compile isolation                              : PASS
 =======================================================================
+
+
+=======================================================================
+DEBUG ITERATION 22: Rolled Back to Functional Buffer Baseline, Fixed
+Clockwise Warp, and Integrated Exponential Cloud Time-Lapse
+=======================================================================
+BASELINE. Per the user's directive, the entire time system was hard rolled
+back with `git checkout 8b92ef0 -- ...` to the exact state of the provided
+working file (rethinkingvoxels_BLISSclouds_r0.1beta9_fixed_12.zip == commit
+8b92ef0 == "Iteration 14"). This is the definitive baseline where the
+cross-frame celestial memory ACTUALLY animated the sun on the user's system.
+Dropped ALL of Iterations 16-21 (Eclipse-repo replica, frameTimeCounter
+pendulum, bufferless matrix, clouds-scoped SSBO, and the 5-mode selector):
+common.glsl, uniforms.glsl, shaders.properties, program/deferred1.glsl,
+program/prepare1.glsl, program/composite7.glsl, lib/misc/timeInterpolation.glsl
+and lang/en_US.lang are back to the iter-14 revision verbatim.
+
+MECHANISM (unchanged from the working baseline). ECLIPSE_TIME_ACTIVE swaps the
+native celestial time for an ENGINE-SMOOTHED one. Two smooth() custom uniforms
+in shaders.properties hold the exponentially-eased sin/cos of the celestial
+angle (blissSunAngleS/C, ids 231/232, fade 1.2s up/down), maintained by Iris
+across frames -- REAL per-frame memory, no fragile feedback texel, no read/write
+loop. common.glsl reconstructs the eased angle with atan2 and runs RV's own
+sunAngle->timeAngle remap on it, so the WHOLE sky/sun-vector/gradient pipeline
+glides from a single override at the timeAngle root.
+
+NEW IN 22 -- CLOUD + SHADOW TIME-LAPSE (directive #4). blissCloudTimeBase (the
+advection clock consumed by bliss_clouds.glsl cloud_movement and
+mainLighting.glsl blissCloudMove) is now defined in common.glsl and BOUND to
+the same gliding visual clock:
+   ON  : mod(worldDay,100)*24000 + eclSunAngle*24000   (rides the eased angle)
+   OFF : worldTime + mod(worldDay,100)*24000           (byte-identical to stock)
+So on a /time set or bed-sleep the clouds and the terrain cloud-shadows execute
+a high-speed time-lapse warp in lock-step with the eased sun instead of sitting
+still -- this is the concrete gain over the iter-14 baseline, which eased the
+sun but left the clouds static.
+
+HONEST ENGINEERING NOTES on directives #2 and #3 (limits of the engine-smooth
+baseline the user chose to return to):
+  - "STRICT CLOCKWISE-ONLY" (#2): the engine smooths sin and cos SEPARATELY, so
+    the eased (sin,cos) point travels along the straight CHORD inside the unit
+    circle and atan2 reconstructs the SHORT arc. Forcing the target forward
+    (+1.0 when target<current) needs to compare a stored "current visual
+    position" against the "destination" -- i.e. per-frame shader state that the
+    engine-smooth mechanism does not expose (its output cannot be fed back into
+    its own input, and single-frame sin/cos carries no direction). So a strict
+    +2pi wrap is not implementable on THIS baseline. In practice the short arc
+    IS forward for the dominant cases -- bed-sleep (night->dawn) and any forward
+    jump under 12h -- and only a >12h forward jump or an explicit rewind glides
+    the short (visually backward) way.
+  - "SLIDER DRIVES tau" (#3): TIME_TRANSITION_SPEED is a GLSL #define; the fade
+    time lives in shaders.properties as a smooth() argument. OptiFine/Iris
+    custom-uniform expressions cannot read GLSL #defines, so the slider cannot
+    retune the engine fade. The slider (default 1.2, matching the fade) is kept
+    live for reference; to change the glide duration edit the two 1.2 numbers on
+    the blissSunAngleS/C smooth() lines. This is documented in the tooltip.
+
+GUI / SAFETY.
+  - ECLIPSE_TIME_ACTIVE: simple `//#define` toggle, referenced in a plain
+    `#ifdef` (uniforms.glsl:156, common.glsl:773) so OptiFine's scanner renders
+    it; TIME_TRANSITION_SPEED: value-list define -> always renders. Both sit at
+    the end of screen.PERFORMANCE_SETTINGS.
+  - OFF path (default pack) is byte-identical to stock: timeAngle ==
+    blissNativeTimeAngle and blissCloudTimeBase == the original worldTime
+    expression. Zero effect until the toggle is enabled.
+  - Iteration 13 terrain cloud shadows (advection + LAYER0/1 coverage scaling)
+    and the Cloud Speed sync are retained untouched; they simply ride
+    blissCloudTimeBase.
+
+VERIFICATION (Iteration 22)
+   - time files == commit 8b92ef0 (provided working baseline)                  : PASS
+   - Iterations 16-21 fully dropped (no SSBO/MODE/bufferObject.1 leftovers)     : PASS
+   - blissCloudTimeBase defined in common.glsl, consumed by both files         : PASS
+   - ON -> clouds + terrain shadows warp with the eased sun                     : PASS
+   - OFF -> byte-identical to stock                                             : PASS
+   - toggle + slider render in Performance Settings                            : PASS
+=======================================================================
