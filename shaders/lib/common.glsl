@@ -152,32 +152,35 @@
     #define CLOUD_CLOSED_AREA_CHECK
     #define CLOUD_ALT1 192 //[-96 -92 -88 -84 -80 -76 -72 -68 -64 -60 -56 -52 -48 -44 -40 -36 -32 -28 -24 -20 -16 -10 -8 -4 0 4 8 12 16 20 22 24 28 32 36 40 44 48 52 56 60 64 68 72 76 80 84 88 92 96 100 104 108 112 116 120 124 128 132 136 140 144 148 152 156 160 164 168 172 176 180 184 188 192 196 200 204 208 212 216 220 224 228 232 236 240 244 248 252 256 260 264 268 272 276 280 284 288 292 296 300 304 308 312 316 320 324 328 332 336 340 344 348 352 356 360 364 368 372 376 380 384 388 392 396 400 404 408 412 416 420 424 428 432 436 440 444 448 452 456 460 464 468 472 476 480 484 488 492 496 500 510 520 530 540 550 560 570 580 590 600 610 620 630 640 650 660 670 680 690 700 710 720 730 740 750 760 770 780 790 800]
     #define CLOUD_SPEED_MULT 100 //[0 5 7 10 15 20 25 30 35 40 45 50 55 60 65 70 75 80 85 90 95 100 110 120 130 140 150 160 170 180 190 200 220 240 260 280 300 325 350 375 400 425 450 475 500 550 600 650 700 750 800 850 900]
-    // Cinematic time-transition glide duration, in SECONDS. Iteration 19: the
-    // ease is computed in prepare1 as ew = 1 - exp(-frameTime/TIME_TRANSITION_
-    // SPEED), so THIS slider drives the glide duration. Larger = slower. 0 = off.
+    // Time-transition glide duration, in SECONDS (drives Modes 1/2/3/5 below).
     #define TIME_TRANSITION_SPEED 1.2 //[0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4 1.6 1.8 2.0 2.5 3.0 4.0 5.0 7.0 10.0]
-    // Master switch (Performance screen). OFF by default (the pack is byte-
-    // identical when off). Iteration 19 (option 4): the eased visual time lives
-    // in a PERSISTENT SSBO (binding=1) -- an SSBO is not cleared between frames,
-    // unlike the colortex this Iris was clearing, so the easing actually holds.
-    // prepare1 (a 430 pass before the clouds) rolls it FORWARD-ONLY toward the
-    // native time; the 430 cloud/deferred passes read it, so the CLOUD LIGHTING
-    // and CLOUD ADVECTION glide and warp forward through midnight on /time set,
-    // bed-sleep or time plugins. SSBOs only exist in 430 passes, so the 130
-    // sky/terrain passes (and the vanilla sun/moon/star sprites + Iris shadow
-    // map) stay on real time and still snap -- this is the clouds-scoped path.
-    //#define ECLIPSE_TIME_ACTIVE
-    // GUI-detection anchor (Iteration 20): Iris/OptiFine only renders a boolean
-    // option's checkbox if the option name appears in a SIMPLE #ifdef/#ifndef.
-    // The Eclipse feature is gated by compound "#if defined ECLIPSE_TIME_ACTIVE
-    // && __VERSION__ >= 430" blocks, which the option scanner does NOT count as a
-    // usage -- so the toggle was missing from Performance Settings. This empty
-    // simple #ifdef is the usage the scanner needs; it changes no behaviour and
-    // leaves the Iteration 19 easing math untouched.
-    #ifdef ECLIPSE_TIME_ACTIVE
-        #define ECLIPSE_TIME_ACTIVE_ENABLED // harmless marker; presence of this
-        // simple #ifdef is what makes the toggle appear in the menu.
-    #endif
+    // ---- Time Transition MODE selector (Iteration 21) --------------------
+    // A value-list #define renders reliably in the Performance menu (unlike a
+    // bare //#define boolean, which Iris hid in Iter 20). 5 architectures:
+    //   0 OFF            -- native time everywhere (byte-identical to stock).
+    //   1 Eclipse SSBO   -- STATEFUL: a persistent SSBO (binding=1) holds the
+    //                       eased visual day, advanced FORWARD-only in deferred1
+    //                       (a no-discard 430 pass) with the exp-out curve. The
+    //                       430 cloud/atmosphere passes read it, so cloud LIGHT
+    //                       + ADVECTION truly glide to the new time. Needs the
+    //                       SSBO to persist across frames on your driver.
+    //   2 Procedural Wave-- BUFFERLESS: cloud advection on a continuous
+    //                       frameTimeCounter clock -> clouds never snap/freeze
+    //                       on a jump, they keep flowing. (No state; always works.)
+    //   3 Time-Lapse Storm- BUFFERLESS: like 2 but a fast wind multiplier, so
+    //                       the clouds streak/rush across the sky (stormy).
+    //   4 Pendulum Clock -- BUFFERLESS: continuous clock with a rhythmic
+    //                       forward surge (sin-modulated wind), decoupled clock.
+    //   5 Hybrid Blend   -- BUFFERLESS: cloud clock = blend of the native and
+    //                       the continuous clock, softening the snap.
+    // Modes 2-5 leave the SKY/SUN native (state-free math cannot ease a jump);
+    // they animate the CLOUDS + terrain shadows only.
+    #define TIME_TRANSITION_MODE 0 //[0 1 2 3 4 5]
+    // Internal tunables for the bufferless modes (not GUI-exposed):
+    #define BLISS_STORM_MULT 10.0     // Mode 3: storm wind multiplier
+    #define BLISS_PENDULUM_RATE 0.08  // Mode 4: surge frequency (rad/s)
+    #define BLISS_PENDULUM_AMP 200.0  // Mode 4: surge amplitude (ticks; AMP*RATE<20 keeps it forward-only)
+    #define BLISS_HYBRID_MIX 0.6      // Mode 5: continuous-vs-native blend
     #define CLOUD_R 100 //[25 30 35 40 45 50 55 60 65 70 75 80 85 90 95 100 110 120 130 140 150 160 170 180 190 200 220 240 260 280 300]
     #define CLOUD_G 100 //[25 30 35 40 45 50 55 60 65 70 75 80 85 90 95 100 110 120 130 140 150 160 170 180 190 200 220 240 260 280 300]
     #define CLOUD_B 100 //[25 30 35 40 45 50 55 60 65 70 75 80 85 90 95 100 110 120 130 140 150 160 170 180 190 200 220 240 260 280 300]
@@ -741,14 +744,14 @@
 //Very Common Stuff//
     #include "/lib/uniforms.glsl"
 
-    // Eclipse cinematic time state (Iteration 19, option 4): a small PERSISTENT
-    // SSBO at binding=1 (bufferObject.1). Unlike a colortex, an SSBO is not
-    // cleared between frames, so it can hold the eased visual time. It only
-    // exists in #version 430 passes (the cloud / deferred passes); the 130
-    // sky/terrain passes keep native time. prepare1 (a 430 pass that runs before
-    // deferred) advances blissVisualDaySSBO once per frame; the cloud passes
-    // read it. Gated so OFF (and 130 passes) declare nothing -- byte-identical.
-    #if defined ECLIPSE_TIME_ACTIVE && __VERSION__ >= 430
+    // Mode 1 (Eclipse SSBO) cinematic time state: a small PERSISTENT SSBO at
+    // binding=1 (bufferObject.1). Unlike a colortex, an SSBO is not cleared
+    // between frames, so it can hold the eased visual time. It only exists in
+    // #version 430 passes (the cloud / deferred passes); the 130 sky/terrain
+    // passes keep native time. Iteration 21: the once-per-frame update moved to
+    // deferred1 (a NO-DISCARD 430 pass) -- prepare1 discards every fragment,
+    // which likely dropped the store and left the transition static in Iter 19.
+    #if TIME_TRANSITION_MODE == 1 && __VERSION__ >= 430
       layout(std430, binding = 1) coherent buffer blissTimeBuffer {
           float blissVisualDaySSBO; // eased visual day position (unwrapped, mod 100)
           float blissSeedSSBO;      // 0 until seeded, then 1
@@ -767,19 +770,36 @@
       float blissNativeTimeAngle = (tAfrc * (1.0-tAmix) + tAfrs * tAmix + hA) * 0.5;
     #endif
 
-    // ---- Eclipse SSBO-eased cinematic time (Iteration 19, option 4) ------
-    // In the 430 cloud/deferred passes, read the persistent eased visual day
-    // position from the SSBO (advanced FORWARD-ONLY in prepare1). timeAngle =
-    // fract(D) eases the cloud LIGHTING (GetSunVector reads it) and
-    // blissCloudTimeBase = D*24000 eases the cloud ADVECTION -- so on a /time
-    // set the clouds glide and warp forward to the new time. The SKY/SUN and the
-    // 130 terrain passes stay NATIVE (no SSBO there), so they still snap; this is
-    // the clouds-scoped path the user chose. Unseeded -> native (no pop).
-    #if defined ECLIPSE_TIME_ACTIVE && defined FRAGMENT_SHADER && __VERSION__ >= 430
+    // ---- Time Transition MODE: pick timeAngle + the cloud advection clock ---
+    // timeAngle drives GetSunVector / lightVec / sky factors / cloud lighting.
+    // blissCloudTimeBase drives cloud_movement (bliss_clouds.glsl) and the
+    // terrain cloud-shadow advection (mainLighting.glsl).
+    #if TIME_TRANSITION_MODE == 1 && defined FRAGMENT_SHADER && __VERSION__ >= 430
+      // Mode 1 -- stateful SSBO ease (430 cloud/atmosphere passes): the visual
+      // day glides to the new time, so cloud LIGHTING + ADVECTION both ease.
       float blissVisualDay = (blissSeedSSBO > 0.5) ? blissVisualDaySSBO : blissNativeTimeAngle;
       float timeAngle = fract(blissVisualDay);
       float blissCloudTimeBase = blissVisualDay * 24000.0;
+    #elif TIME_TRANSITION_MODE >= 2 && defined FRAGMENT_SHADER
+      // Modes 2-5 -- BUFFERLESS: sky stays native, only the cloud clock changes.
+      float timeAngle = blissNativeTimeAngle;
+      // Continuous real-time clock (x20 = the normal 20 ticks/s drift); the
+      // slider scales it (larger = slower), so it never snaps on a time jump.
+      float bliss_ftcBase   = frameTimeCounter * 20.0 * (1.2 / max(TIME_TRANSITION_SPEED, 0.1));
+      float bliss_nativeBase = (worldTime + mod(worldDay, 100) * 24000.0);
+      #if   TIME_TRANSITION_MODE == 2
+        float blissCloudTimeBase = bliss_ftcBase;                                   // Procedural Wave
+      #elif TIME_TRANSITION_MODE == 3
+        float blissCloudTimeBase = bliss_ftcBase * BLISS_STORM_MULT;                // Time-Lapse Storm
+      #elif TIME_TRANSITION_MODE == 4
+        float blissCloudTimeBase = frameTimeCounter * 20.0                          // Pendulum Clock
+                                 + sin(frameTimeCounter * BLISS_PENDULUM_RATE) * BLISS_PENDULUM_AMP;
+      #else
+        float blissCloudTimeBase = mix(bliss_nativeBase, bliss_ftcBase, BLISS_HYBRID_MIX); // Hybrid Blend
+      #endif
     #else
+      // Mode 0 (off), or Mode 1 outside the 430 fragment passes, or the vertex
+      // stage: exact native time -- byte-identical to stock.
       float timeAngle = blissNativeTimeAngle;
       float blissCloudTimeBase = (worldTime + mod(worldDay, 100) * 24000.0);
     #endif

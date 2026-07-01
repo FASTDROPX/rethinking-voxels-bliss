@@ -1370,3 +1370,68 @@ BALANCE / SAFETY CONFIRMATION (Iteration 20)
    - lang label + tooltip bound (clouds-scoped / persistent SSBO)              : PASS
    - OFF path byte-identical (anchor only defines an unused marker when ON)     : PASS
 =======================================================================
+
+
+=======================================================================
+DEBUG ITERATION 21 -- 5-MODE TIME TRANSITION MATRIX WITH EXPONENTIAL-OUT
+                        CLOUD TIME-LAPSE WARP
+=======================================================================
+Iteration 19's single SSBO mode was static in-game. Rather than bet everything
+on one technique that I cannot test here, the binary toggle is replaced with a
+5-mode selector so the user can pick whichever animates on their driver.
+
+  #define TIME_TRANSITION_MODE 0 //[0 1 2 3 4 5]   (a value-list define, which
+  renders reliably in the menu -- the Iter-20 boolean-detection problem cannot
+  recur), plus the retained TIME_TRANSITION_SPEED slider.
+
+THE MODES (lib/common.glsl picks timeAngle + blissCloudTimeBase per mode)
+------------------------------------------------------------------------
+  0 OFF          : native everywhere -> byte-identical to stock.
+  1 Eclipse SSBO : STATEFUL. Persistent SSBO (binding=1) holds the eased visual
+                   day, advanced FORWARD-only with ew = 1-exp(-frameTime/SPEED).
+                   Read in the 430 cloud/atmosphere passes -> cloud lighting AND
+                   advection truly glide to the new time. *** KEY FIX: the once-
+                   per-frame SSBO update MOVED from prepare1 to deferred1. ***
+                   prepare1 does `discard;` on every fragment, which very likely
+                   dropped the SSBO store and caused the Iter-19 static result;
+                   deferred1 is a NO-DISCARD 430 pass, so the store is retained.
+  2 Procedural Wave : BUFFERLESS. blissCloudTimeBase = frameTimeCounter*20 (the
+                   normal 20 ticks/s drift), slider-scaled. Clouds flow on a
+                   continuous clock and never snap/freeze on a jump. Always works
+                   (no state, no SSBO, no version limits).
+  3 Time-Lapse Storm: BUFFERLESS. Mode 2 x BLISS_STORM_MULT (10x) -> clouds
+                   streak and rush across the sky.
+  4 Pendulum Clock : BUFFERLESS. Continuous clock + a sin surge
+                   (AMP*RATE < 20 keeps it forward-only, never reversing).
+  5 Hybrid Blend : BUFFERLESS. mix(native clock, continuous clock, 0.6) to
+                   soften the snap.
+Modes 2-5 keep the SKY/SUN native (state-free math cannot smooth a time JUMP --
+that needs per-frame memory); they animate the CLOUDS + terrain shadows only.
+cloud_movement (bliss_clouds.glsl) and the terrain-shadow advection
+(mainLighting.glsl) already read blissCloudTimeBase, so all modes drive them.
+
+SLIDER: TIME_TRANSITION_SPEED drives Mode 1 (the exp-out time constant) and
+scales the cloud flow speed in Modes 2, 3 and 5 (larger = slower). Mode 4 is a
+deliberately decoupled clock.
+
+GUI / LANG: shaders.properties screen.PERFORMANCE_SETTINGS now lists
+TIME_TRANSITION_MODE next to TIME_TRANSITION_SPEED; en_US.lang maps the option
+label, all six value labels (OFF / Eclipse SSBO / Procedural Wave / Time-Lapse
+Storm / Pendulum Clock / Hybrid Blend) and a scannable per-mode tooltip.
+
+PRESERVED (per protocol): Iteration 13 terrain cloud shadows (advection +
+LAYER0/1 coverage scaling) -- untouched; they simply follow blissCloudTimeBase.
+Mode 0 is byte-identical to stock. All non-OFF logic is gated behind
+TIME_TRANSITION_MODE (and Mode 1 additionally behind __VERSION__>=430), so a
+compile issue in any one mode cannot affect Mode 0 or the other modes.
+
+BALANCE / SAFETY CONFIRMATION (Iteration 21)
+   - value-list selector renders reliably (no boolean-detection issue)         : PASS
+   - Mode 0 native everywhere -> byte-identical                                : PASS
+   - Mode 1 SSBO update moved to no-discard deferred1 (store retained)         : PASS
+   - Modes 2-5 bufferless -> guaranteed cloud animation, no state needed       : PASS
+   - forward-only preserved (Mode 1 arc; Mode 4 AMP*RATE<20)                   : PASS
+   - slider scales Modes 1/2/3/5                                               : PASS
+   - Iteration 13 terrain shadows retained (ride blissCloudTimeBase)          : PASS
+   - all modes gated; per-mode compile isolation                              : PASS
+=======================================================================

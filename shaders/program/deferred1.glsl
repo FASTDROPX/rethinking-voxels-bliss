@@ -500,6 +500,26 @@ void main() {
         /*RENDERTARGETS:0,5,4,8,7*/
         gl_FragData[4] = refToWrite;
     #endif
+
+#if TIME_TRANSITION_MODE == 1 && __VERSION__ >= 430
+    // ---- Mode 1 (Eclipse SSBO): once-per-frame forward-only time update -----
+    // deferred1 renders the clouds AND does not discard, so this SSBO store is
+    // retained (the Iteration 19 update was in prepare1, which discards every
+    // fragment -- the likely cause of the static result). One invocation
+    // (pixel 0,0) advances the visual day D toward the native time, FORWARD ONLY
+    // (gap = forward arc round the day, so a night->morning jump rolls through
+    // midnight, never rewinds), on the slider-driven exp-out curve
+    // ew = 1 - exp(-frameTime / TIME_TRANSITION_SPEED). The SSBO persists across
+    // frames (it is not a colortex), which is what makes the easing hold.
+    if (gl_FragCoord.x < 1.0 && gl_FragCoord.y < 1.0) {
+        float prevDay = (blissSeedSSBO > 0.5) ? blissVisualDaySSBO : blissNativeTimeAngle;
+        float dtv = (frameTime > 0.0 && frameTime < 30.0) ? frameTime : 0.0; // pause/hitch guard
+        float fgap = fract(blissNativeTimeAngle - fract(prevDay));           // forward arc [0,1)
+        float ewv = clamp(1.0 - exp(-dtv / max(TIME_TRANSITION_SPEED, 0.0001)), 0.0, 1.0);
+        blissVisualDaySSBO = mod(prevDay + fgap * ewv, 100.0);
+        blissSeedSSBO = 1.0;
+    }
+#endif
 }
 
 #endif

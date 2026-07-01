@@ -427,11 +427,17 @@ option.CLOUD_SPEED_MULT=Cloud Speed
 option.CLOUD_SPEED_MULT.comment=Determines how fast the clouds are going to move. "Synced to World Time" setting uses Minecraft world time to advance the cloud positions; this allows for clouds to appear the same between players in the same server. §e[*]§r This setting only works with the "Reimagined" or "Unbound" Cloud Styles.
 value.CLOUD_SPEED_MULT.100=Synced to World Time
 option.TIME_TRANSITION_SPEED=Time Transition Speed
-option.TIME_TRANSITION_SPEED.comment=Duration (seconds) of the cloud time-transition glide. When the world time jumps (/time set, sleeping, time plugins) the clouds ease to the new time over this long with an exponential-out curve. §e[*]§r The ease is computed in-shader, so this slider directly controls the speed. Higher = slower, more cinematic. 0.0 = instant. Only matters while §aEclipse Time Transition§r is enabled.
+option.TIME_TRANSITION_SPEED.comment=Glide duration (seconds) for the Time Transition. Larger = slower, more cinematic; 0.0 = instant. §e[*]§r Drives Mode 1 (the exp-out ease toward the new time) and scales the cloud flow speed in Modes 2, 3 and 5. §e[*]§r Only matters when §aTime Transition§r is not OFF.
 value.TIME_TRANSITION_SPEED.0.0=OFF (Instant)
 
-option.ECLIPSE_TIME_ACTIVE=Eclipse Time Transition
-option.ECLIPSE_TIME_ACTIVE.comment=Master switch (in §aPerformance§r). §e[*]§r OFF (default): the pack is byte-identical to the stock build. §e[*]§r ON: the eased visual time is kept in a persistent buffer (an SSBO, which -- unlike a colortex -- is not cleared between frames), rolled FORWARD-ONLY toward the new time. The cloud LIGHTING and cloud ADVECTION glide and warp forward through midnight when the world time jumps, at the speed set by §aTime Transition Speed§r. §e[*]§r This persistent buffer only exists in the deferred/cloud render passes, so the vanilla sky, sun/moon/star sprites and the Iris shadow map stay on real time and still snap -- this is the clouds-scoped path.
+option.TIME_TRANSITION_MODE=Time Transition
+option.TIME_TRANSITION_MODE.comment=Cinematic time-transition architecture, chosen because different Iris/driver builds allow different techniques -- try them to see what animates on your setup. §e[*]§r §a0 OFF§r: native time everywhere; byte-identical to the stock pack. §e[*]§r §a1 Eclipse SSBO§r: the "real" one -- a persistent SSBO holds an eased visual time that rolls FORWARD-only to the new time, so the cloud lighting AND advection truly glide (and the 430 atmosphere with them). Needs the SSBO to survive frames on your driver; if it stays static, use 2-5. §e[*]§r §a2 Procedural Wave§r: bufferless -- the clouds drift on a continuous real-time clock so they never snap or freeze on a jump. §e[*]§r §a3 Time-Lapse Storm§r: bufferless -- like 2 but a fast wind, so clouds streak and rush across the sky. §e[*]§r §a4 Pendulum Clock§r: bufferless -- a continuous clock with a rhythmic forward surge. §e[*]§r §a5 Hybrid Blend§r: bufferless -- blends the native and continuous cloud clocks to soften the snap. §e[*]§r Modes 2-5 animate the CLOUDS + terrain shadows only; the sun/sky stay native (state-free math cannot smooth a time jump).
+value.TIME_TRANSITION_MODE.0=OFF
+value.TIME_TRANSITION_MODE.1=Eclipse SSBO
+value.TIME_TRANSITION_MODE.2=Procedural Wave
+value.TIME_TRANSITION_MODE.3=Time-Lapse Storm
+value.TIME_TRANSITION_MODE.4=Pendulum Clock
+value.TIME_TRANSITION_MODE.5=Hybrid Blend
 
 option.CLOUD_R=Cloud Red Multiplier
 option.CLOUD_G=Cloud Green Multiplier
