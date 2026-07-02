@@ -1907,3 +1907,53 @@ VERIFICATION (Iteration 27)
    - shaders.properties: even grids, no dangling refs, all value-lists          : PASS
    - ECLIPSE_WATER=0 byte-identical to Iteration 26                             : PASS
 =======================================================================
+
+
+=======================================================================
+DEBUG ITERATION 28: Fix GLSL Global-Scope Parse Crash on waterFogColor
+=======================================================================
+SYMPTOM. Iris shader compile aborted with:
+  ParseCancellationException: line 1588:22 no viable alternative at input
+  'waterFogColor ='
+(1588 is the post-include flattened line; the source is lib/common.glsl.)
+
+ROOT CAUSE. The Iteration 27 Eclipse underwater-colour override did:
+    vec3 waterFogColor = underwaterColorM2 * ...;   // declaration
+    #if ECLIPSE_WATER == 1
+        vec3 eclipseWaterAbsorb = ...;
+        waterFogColor = exp(-eclipseWaterAbsorb*6.0) * ...;   // BARE reassignment
+    #endif
+This block sits in common.glsl's "Very Common Stuff" section, which is at
+MODULE/GLOBAL scope (the same place timeAngle and blissCloudTimeBase are chosen).
+A bare assignment statement (waterFogColor = ...;) is only legal inside a
+function; at global scope GLSL allows only declarations-with-initializers, so the
+ANTLR parser had "no viable alternative" at that statement. (This is the exact
+global-scope rule already relied on elsewhere in the file -- the fix mirrors it.)
+
+FIX. Fold the ECLIPSE choice into the INITIALIZER so every branch is a typed
+declaration, matching the timeAngle / blissCloudTimeBase / blissCloudSyncedTime
+selectors:
+    #if ECLIPSE_WATER == 1
+        vec3 eclipseWaterAbsorb = ...;
+        vec3 waterFogColor = exp(-eclipseWaterAbsorb*6.0) * (0.2 + 0.1*vsBrightness);
+    #else
+        vec3 waterFogColor = underwaterColorM2 * vec3(0.2 + 0.1*vsBrightness);
+    #endif
+The #else branch is character-identical to the pre-27 line, so ECLIPSE_WATER == 0
+is byte-identical again.
+
+AUDIT. Swept common.glsl lines 720-940 (the global-scope water/time block) for any
+other bare (typeless) reassignment -> NONE. All Iteration 25-27 GLSL added at
+global scope (eclipseWaterTimeG in eclipse_water.glsl, blissCloud* selectors) are
+typed declarations. Every edit in water.glsl / refraction.glsl / shadow.glsl is
+inside a function body, where bare assignments are legal, so they were never
+affected. No feature logic changed -- Iterations 25/26 wave geometry+normals,
+Iteration 27 absorption optics + specular + player wake all remain as authored.
+
+VERIFICATION (Iteration 28)
+   - waterFogColor now chosen in the initializer (no global bare reassign)      : PASS
+   - no other global-scope bare reassignment in common.glsl                     : PASS
+   - #if/#endif (81/81) and brace balance intact                                : PASS
+   - ECLIPSE_WATER == 0 branch identical to pre-Iteration-27 line               : PASS
+   - all Iteration 27 optics/interaction/menu code unchanged                    : PASS
+=======================================================================

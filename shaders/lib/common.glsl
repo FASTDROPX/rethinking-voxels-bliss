@@ -917,14 +917,18 @@
     #else
         vec3 underwaterColorM2 = underwaterColorM1 * vec3(UNDERWATERCOLOR_RM, UNDERWATERCOLOR_GM, UNDERWATERCOLOR_BM);
     #endif
-    vec3 waterFogColor = underwaterColorM2 * vec3(0.2 + 0.1 * vsBrightness);
+    // Iteration 27 (fixed 28): Eclipse underwater scattering colour. Per-channel
+    // Beer-Lambert transmission (exp(-absorb*depth)) gives Eclipse's blue-green
+    // deep ocean; kept at RV's fog brightness so it blends with the rest of the
+    // volumetric fog pipeline. NOTE: this block is at common.glsl GLOBAL scope,
+    // where a bare reassignment is illegal GLSL -- so the ECLIPSE choice is made
+    // inside the initializer (both branches declare waterFogColor with a type),
+    // exactly like the timeAngle/blissCloudTimeBase selectors above.
     #if ECLIPSE_WATER == 1
-        // Iteration 27: Eclipse underwater scattering colour. Per-channel
-        // Beer-Lambert transmission (exp(-absorb*depth)) gives Eclipse's
-        // blue-green deep ocean; kept at RV's fog brightness so it blends with
-        // the rest of the volumetric fog pipeline.
         vec3 eclipseWaterAbsorb = vec3(ECLIPSE_WATER_ABSORB_R, ECLIPSE_WATER_ABSORB_G, ECLIPSE_WATER_ABSORB_B) * ECLIPSE_WATER_ABSORB_MULT;
-        waterFogColor = exp(-eclipseWaterAbsorb * 6.0) * (0.2 + 0.1 * vsBrightness);
+        vec3 waterFogColor = exp(-eclipseWaterAbsorb * 6.0) * (0.2 + 0.1 * vsBrightness);
+    #else
+        vec3 waterFogColor = underwaterColorM2 * vec3(0.2 + 0.1 * vsBrightness);
     #endif
 
     #if NETHER_COLOR_MODE == 3
