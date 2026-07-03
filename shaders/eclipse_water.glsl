@@ -193,7 +193,22 @@ float EclipseWaterCaustics(vec3 worldPos) {
         heightSum += pow(abs(abs(n * 2.0 - 1.0) * 2.0 - 1.0), 1.0 + largeWavesCurved);
     }
 
-    return exp((1.0 + 5.0 * sqrt(largeWavesCurved)) * (heightSum / 3.0 - 0.5));
+    float caustic = exp((1.0 + 5.0 * sqrt(largeWavesCurved)) * (heightSum / 3.0 - 0.5));
+
+    // Iteration 30: route the Eclipse wave NORMAL into the seafloor projection.
+    // Caustics are sunlight focused by the surface, so the light bands must track
+    // the actual wave slope. Sample the SAME analytical wave normal the surface
+    // renders (finite difference of the Eclipse heightmap) and brighten the
+    // caustic along the slopes, tying the shadow-pass seafloor light to the wave
+    // geometry above. All locals are typed and function-scoped.
+    const float dP = 0.35;
+    float hCenter = EclipseWaterHeightmap(worldPos.xz, largeWavesCurved);
+    float hRight  = EclipseWaterHeightmap(worldPos.xz + vec2(dP, 0.0), largeWavesCurved);
+    float hUp     = EclipseWaterHeightmap(worldPos.xz + vec2(0.0, dP), largeWavesCurved);
+    vec2 waveSlope = vec2(hRight - hCenter, hUp - hCenter) / dP;
+    float focus = 1.0 + 1.5 * dot(waveSlope, waveSlope);
+
+    return caustic * focus;
 }
 
 // Wave-geometry gradient for the composite refraction pass: the screen-space
@@ -292,13 +307,13 @@ vec2 EclipseWorldWake(vec2 surfXZ, vec3 camPos, vec3 prevCamPos) {
             // Only cells the player is currently near radiate; this is the
             // time-attenuated distance decay -- as the player leaves a cell its
             // rings fade, leaving a trail.
-            float active = smoothstep(CELL * 1.6, 0.0, length(camPos.xz - cellCenter));
+            float isEclipseWaterActive = smoothstep(CELL * 1.6, 0.0, length(camPos.xz - cellCenter));
             vec2 rel = surfXZ - cellCenter;
             float d = length(rel);
             float band = smoothstep(4.0, 0.4, d);            // ring extent from the cell
             float phase = d * RING_FREQ - frameTimeCounter * RING_SPEED;
             // gradient of cos(phase) points radially -> perturbs the surface normal
-            grad += (rel / max(d, 0.001)) * (-sin(phase)) * active * band;
+            grad += (rel / max(d, 0.001)) * (-sin(phase)) * isEclipseWaterActive * band;
         }
     }
     return grad * moveGate;

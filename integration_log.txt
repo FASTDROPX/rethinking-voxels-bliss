@@ -2034,3 +2034,51 @@ VERIFICATION (Iteration 29)
    - subscreens valid, WATER_SETTINGS even grid                                   : PASS
    - Water Style != Eclipse -> byte-identical fallback                           : PASS
 =======================================================================
+
+
+=======================================================================
+DEBUG ITERATION 30: Fix reserved-word "active" crash; wire Eclipse wave
+normal into the caustic shadow pass
+=======================================================================
+SYMPTOM. Iris aborted compiling the translucent pass -- reserved word "active"
+used as a variable (flattened terrain_translucent.fsh lines 1488/1493). Because
+eclipse_water.glsl is included by gbuffers_water, composite AND shadow, that one
+crash disabled EVERY Eclipse feature at once (waves, optics, foam, caustics),
+which is why "Eclipse" appeared to do nothing.
+
+FIX 1 (the crash). In eclipse_water.glsl EclipseWorldWake(), the per-cell
+radiation weight was named "active" -- a GLSL reserved word. Renamed it to
+isEclipseWaterActive at both the declaration and its single use. No other
+occurrence existed. (Edited by hand at the known lines, not via a scan.)
+
+FIX 2 (Water Style 4 material, verified). The deep-ocean base colour, per-channel
+absorption/clarity and wave-crest foam are applied in the gbuffers_water FRAGMENT
+stage: water.glsl (included by gbuffers_water for both the IPBR and direct water
+paths) carries them under #if ECLIPSE_WATER == 1, and ECLIPSE_WATER is derived
+from WATER_STYLE == 4. They were never broken structurally -- only suppressed by
+the Fix-1 crash. Confirmed the Step 1 base-colour, Step 3 absorption and Step 3
+crest-foam blocks are present and gated.
+
+FIX 3 (caustic swap now routes the wave normal). Water Caustic Style 4 already
+routed to EclipseWaterCaustics() in the shadow pass (keyed #if WATER_CAUSTIC_STYLE
+== 4, which "Same as Water" resolves to when the base style is Eclipse). It read
+as doing nothing only because of the Fix-1 crash. To make the seafloor projection
+physically track the surface, EclipseWaterCaustics now samples the SAME analytical
+Eclipse wave normal the surface uses -- a finite-difference slope of the Eclipse
+heightmap (EclipseWaterHeightmap, defined earlier in the file, no forward
+reference) -- and brightens the caustic bands along the wave slopes (focus = 1 +
+1.5*dot(slope,slope)). So the shadow-pass light bands now converge with the wave
+geometry above them.
+
+SCOPE SAFETY. Every new local (isEclipseWaterActive, hCenter/hRight/hUp,
+waveSlope, focus, caustic) is explicitly typed and inside a function body
+(EclipseWorldWake / EclipseWaterCaustics). No global-scope statements added.
+
+VERIFICATION (Iteration 30)
+   - reserved word "active" removed (renamed to isEclipseWaterActive)           : PASS
+   - Water Style 4 -> Eclipse base colour + absorption + foam in gbuffers_water  : PASS
+   - Water Caustic Style 4 -> EclipseWaterCaustics with wave-normal focusing     : PASS
+   - EclipseWaterHeightmap referenced after its definition (no fwd ref)          : PASS
+   - all additions typed + function-scoped; no global bare assignments          : PASS
+   - Water Style != Eclipse -> byte-identical fallback (unchanged gating)        : PASS
+=======================================================================
