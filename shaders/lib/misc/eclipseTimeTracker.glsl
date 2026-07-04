@@ -36,6 +36,15 @@
 //  and 100th jump run the identical routine. A jump landing mid-glide simply
 //  re-bases the start at the current visual position -- continuous by
 //  construction, so there is no freeze and no snap, ever.
+//
+//  CURVE (Iteration 37): the visual angle pursues the live native target with
+//  the EXACT Iteration 31 exponential decay -- eclipseEaseExpOut /
+//  eclipseAdvanceTime from lib/misc/timeInterpolation.glsl, called word-for-
+//  word -- closing 1 - exp(-dt / TIME_TRANSITION_SPEED) of the remaining gap
+//  each frame. Same organic exp-out glide as the engine smoothing of the
+//  "perfect" build, but on this module's own resettable state, so the
+//  degenerate collapsed-magnitude accumulation of the engine uniforms is
+//  structurally impossible.
 // =============================================================================
 #ifndef INCLUDE_ECLIPSE_TIME_TRACKER
 #define INCLUDE_ECLIPSE_TIME_TRACKER
@@ -52,6 +61,11 @@ float EclipseVisualSunAngle() {
 }
 
 #ifdef CSH
+    // Iteration 37: the timeline consumes the EXACT Iteration 31 easing
+    // formulas (eclipseEaseExpOut / eclipseAdvanceTime), called word-for-word
+    // from the module that has carried them since Iteration 10.
+    #include "/lib/misc/timeInterpolation.glsl"
+
     layout(rgba32f) uniform image2D eclipse_time_img;
 
     // Runs once per frame from a single shadowcomp invocation.
@@ -80,15 +94,23 @@ float EclipseVisualSunAngle() {
             }
             s0.y = nativeAngle;
 
-            // Timeline: pure frameTimeCounter. t reaches 1 after EXACTLY
-            // TIME_TRANSITION_SPEED seconds; the ease-in-out lands the visual
-            // angle on the LIVE native target (sampled fresh every frame, so
-            // normal time advance during the glide is folded in) and then
-            // tracks it 1:1 until the next trigger.
-            float t = clamp((nowT - s0.z) / dur, 0.0, 1.0);
-            float tS = t * t * (3.0 - 2.0 * t);
-            float gap = fract(nativeAngle - s0.w + 0.5) - 0.5;
-            s1.x = fract(s0.w + gap * tS);
+            // ---- Iteration 37: EXACT Iteration 31 exponential-decay curve. ----
+            // The Iteration 36 smoothstep timeline is gone. Each frame the
+            // ORIGINAL easing formulas from lib/misc/timeInterpolation.glsl
+            // close 1 - exp(-dt / TIME_TRANSITION_SPEED) of the REMAINING
+            // wrap-aware gap toward the LIVE native target -- the exponential
+            // decay is frame-rate independent and identical in shape to the
+            // Iteration 31 engine smoothing: the fast, organic start and the
+            // gentle asymptotic landing of the version that felt perfect. It
+            // now runs on the tracker's own resettable state, so the remaining
+            // gap is recomputed from the CURRENT visual angle every frame and
+            // a jump landing mid-glide simply re-targets the pursuit; nothing
+            // accumulates and no degenerate state can form. Jump 1, jump 2 and
+            // jump 100 trace the identical curve. (dt is clamped to one second
+            // so a hitched frame eases gracefully instead of leaping.)
+            float dt  = clamp(nowT - s1.y, 0.0, 1.0);
+            float gap = fract(nativeAngle - s1.x + 0.5) - 0.5;
+            s1.x = fract(s1.x + eclipseAdvanceTime(0.0, gap, dt));
             s1.y = nowT;
         }
 

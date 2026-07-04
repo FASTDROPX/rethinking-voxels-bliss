@@ -2531,3 +2531,63 @@ VERIFICATION (Iteration 36)
    - Preprocessor balance OK in all edited files                             : PASS
    - Iteration 33/34 configs, profiles, lang, water split intact             : PASS
 =======================================================================
+
+=======================================================================
+ITERATION 37: The Iteration 31 exponential curve, restored word-for-word
+inside the Iteration 36 tracker
+=======================================================================
+REQUEST. The Iteration 36 tracker fixed the state problem (persistent
+image, per-frame compute writer, delta-trigger) but its smoothstep
+timeline lacked the organic feel of the Iteration 31 build. Restore that
+exact curve without touching the tracker architecture.
+
+CHANGE (one math block inside lib/misc/eclipseTimeTracker.glsl).
+The fixed-duration smoothstep progression (t = elapsed/duration,
+tS = t*t*(3-2t)) is REMOVED. The visual angle now pursues the live native
+target with the ORIGINAL Iteration 31 easing formulas, called literally
+from lib/misc/timeInterpolation.glsl -- the module that has carried them
+since Iteration 10:
+    w    = eclipseEaseExpOut(dt)  = 1 - exp(-dt / TIME_TRANSITION_SPEED)
+    step = eclipseAdvanceTime(0, gap, dt) = mix(0, gap, w)
+applied each frame to the wrap-aware REMAINING gap between the tracked
+visual angle and the raw native angle. This is the identical frame-rate-
+independent exponential decay that the Iteration 31 engine smoothing
+performed -- the fast, organic start easing into the gentle asymptotic
+landing -- but running on the tracker's own resettable state: the gap is
+recomputed from the CURRENT visual angle every frame, a jump landing
+mid-glide simply re-targets the pursuit, and the collapsed-magnitude
+accumulation of the old engine uniforms is structurally impossible.
+Jump 1, jump 2 and jump 100 trace the identical curve. dt is clamped to
+one second so a hitched frame eases gracefully instead of leaping.
+TIME_TRANSITION_SPEED is once again the exponential time constant
+(default 7.0; 0.0 = instant via the 0.0001-floor inside
+eclipseEaseExpOut). Option comments and both lang descriptions updated to
+the exponential wording.
+
+KEPT EXACTLY AS ITERATION 36 (verified -- diff touches only the timeline
+block and comments):
+  - persistent 2x1 RGBA32F image state + single shadowcomp.csh compute
+    invocation writer (gl_GlobalInvocationID == 0)
+  - the wrap-aware DELTA-TRIGGER and its 0.004-turn threshold, byte-
+    identical (it keeps marking routine starts in the state texels)
+  - cold-start / reload / frameTimeCounter-wrap hard flush
+  - texelFetch-only readers (GLSL 130-safe)
+KEPT FROM ITERATIONS 34-36: GI_SAMPLE_COUNT=13, GI_STRENGTH=2,
+MAX_TRACE_COUNT=256, SDF_UPDATE_INTERVAL=0, voxel volumes, shadow
+routines, water/caustic style 4, profile.HIGH, the legacy-code-only
+(S1)(Sl)High+ (Default) / Eleve+ (Defaut) profile name (both lang files
+raw-hex-free), and the ECLIPSE_TIME_ACTIVE //[1 2 3] selector with
+default 2 (Sky): mode 2 never touches the wave clock, mode 3 warps it
+with the sky.
+
+VERIFICATION (Iteration 37)
+   - Smoothstep timeline removed; eclipseAdvanceTime/eclipseEaseExpOut are
+     the only progression math (word-for-word Iteration 31 formulas)        : PASS
+   - Wrap-aware remaining-gap pursuit; mid-glide jumps re-target smoothly   : PASS
+   - Delta-trigger + 0.004 threshold byte-identical to Iteration 36         : PASS
+   - Image state architecture and compute writer untouched                  : PASS
+   - timeInterpolation.glsl include-guarded (also included by bliss clouds) : PASS
+   - worldTime/worldDay/TIME_TRANSITION_SPEED in scope at include point     : PASS
+   - Iteration 34-36 configs, profiles, lang names, selector intact         : PASS
+   - Preprocessor balance OK                                                : PASS
+=======================================================================

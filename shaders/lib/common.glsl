@@ -178,13 +178,15 @@
     #define CLOUD_CLOSED_AREA_CHECK
     #define CLOUD_ALT1 192 //[-96 -92 -88 -84 -80 -76 -72 -68 -64 -60 -56 -52 -48 -44 -40 -36 -32 -28 -24 -20 -16 -10 -8 -4 0 4 8 12 16 20 22 24 28 32 36 40 44 48 52 56 60 64 68 72 76 80 84 88 92 96 100 104 108 112 116 120 124 128 132 136 140 144 148 152 156 160 164 168 172 176 180 184 188 192 196 200 204 208 212 216 220 224 228 232 236 240 244 248 252 256 260 264 268 272 276 280 284 288 292 296 300 304 308 312 316 320 324 328 332 336 340 344 348 352 356 360 364 368 372 376 380 384 388 392 396 400 404 408 412 416 420 424 428 432 436 440 444 448 452 456 460 464 468 472 476 480 484 488 492 496 500 510 520 530 540 550 560 570 580 590 600 610 620 630 640 650 660 670 680 690 700 710 720 730 740 750 760 770 780 790 800]
     #define CLOUD_SPEED_MULT 100 //[0 5 7 10 15 20 25 30 35 40 45 50 55 60 65 70 75 80 85 90 95 100 110 120 130 140 150 160 170 180 190 200 220 240 260 280 300 325 350 375 400 425 450 475 500 550 600 650 700 750 800 850 900]
-    // Cinematic time-transition duration, in SECONDS. Iteration 36: the
-    // transition runs on the self-contained tracker (lib/misc/
-    // eclipseTimeTracker.glsl) with a pure frameTimeCounter timeline, so this
-    // value is EXACT -- the glide starts at t = 0 on the detected jump and
-    // lands precisely this many seconds later. No engine fade tiers are
-    // involved any more; every listed value is honoured directly. DEFAULT 7.0.
-    // 0.0 == OFF (Instant): the routine floors at 0.05 s -> vanilla-like snap.
+    // Cinematic time-transition speed, in SECONDS -- the exponential time
+    // constant of the glide. Iteration 37: the self-contained tracker
+    // (lib/misc/eclipseTimeTracker.glsl) pursues the native time with the
+    // EXACT Iteration 31 exponential-decay curve (eclipseEaseExpOut /
+    // eclipseAdvanceTime, lib/misc/timeInterpolation.glsl): each frame it
+    // closes 1 - exp(-dt / THIS_VALUE) of the remaining gap -- the fast,
+    // organic start and gentle asymptotic landing of the build that felt
+    // perfect. Higher = slower, more cinematic. DEFAULT 7.0.
+    // 0.0 == OFF (Instant): time snaps like vanilla.
     // Only has any effect while ECLIPSE_TIME_ACTIVE is 2 (Sky) or 3 (Sky+Water).
     #define TIME_TRANSITION_SPEED 7.0 //[0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4 1.6 1.8 2.0 2.5 3.0 4.0 5.0 7.0 10.0]
     // Eclipse-style GLOBAL cinematic smooth time (Performance screen).
