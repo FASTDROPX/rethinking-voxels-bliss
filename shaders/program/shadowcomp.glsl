@@ -44,6 +44,15 @@ shared uint isActive;
 const float levelFadeDist = 2.0;
 
 void main() {
+    #if ECLIPSE_TIME_ACTIVE >= 2
+        // Iteration 36: single-invocation per-frame update of the self-contained
+        // time-transition tracker (lib/misc/eclipseTimeTracker.glsl). This is
+        // the earliest compute pass that runs every frame in every dimension
+        // (it hosts the voxel SDF update), so every later pass reads the fresh
+        // visual angle within the same frame.
+        if (gl_GlobalInvocationID == uvec3(0u)) EclipseUpdateTimeState();
+    #endif
+
     ivec3 baseCoord = ivec3(gl_WorkGroupID) * 8;
     ivec3 localCoord = ivec3(gl_LocalInvocationID);
     ivec3 texCoord = baseCoord + localCoord;

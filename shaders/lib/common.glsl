@@ -178,15 +178,14 @@
     #define CLOUD_CLOSED_AREA_CHECK
     #define CLOUD_ALT1 192 //[-96 -92 -88 -84 -80 -76 -72 -68 -64 -60 -56 -52 -48 -44 -40 -36 -32 -28 -24 -20 -16 -10 -8 -4 0 4 8 12 16 20 22 24 28 32 36 40 44 48 52 56 60 64 68 72 76 80 84 88 92 96 100 104 108 112 116 120 124 128 132 136 140 144 148 152 156 160 164 168 172 176 180 184 188 192 196 200 204 208 212 216 220 224 228 232 236 240 244 248 252 256 260 264 268 272 276 280 284 288 292 296 300 304 308 312 316 320 324 328 332 336 340 344 348 352 356 360 364 368 372 376 380 384 388 392 396 400 404 408 412 416 420 424 428 432 436 440 444 448 452 456 460 464 468 472 476 480 484 488 492 496 500 510 520 530 540 550 560 570 580 590 600 610 620 630 640 650 660 670 680 690 700 710 720 730 740 750 760 770 780 790 800]
     #define CLOUD_SPEED_MULT 100 //[0 5 7 10 15 20 25 30 35 40 45 50 55 60 65 70 75 80 85 90 95 100 110 120 130 140 150 160 170 180 190 200 220 240 260 280 300 325 350 375 400 425 450 475 500 550 600 650 700 750 800 850 900]
-    // Cinematic time-transition easing duration, in SECONDS -- a LIVE control
-    // (Iteration 23; default retuned Iteration 33; math reverted to the stable
-    // Iteration 31 exponential-decay structure in Iteration 34). It pre-bakes
-    // EIGHT engine-smoothed fade tiers (0.4/0.8/1.2/2.0/3.0/5.0/7.0/10.0 s) in
-    // shaders.properties; the ECLIPSE block below picks the tier whose fade
-    // matches this slider (constant-folded, no runtime cost). DEFAULT is 7.0:
-    // the dedicated 7-second exponential fade tier.
-    // 0.0 == OFF (Instant): easing is skipped and time snaps like vanilla. Only
-    // has any effect while ECLIPSE_TIME_ACTIVE is 2 (Sky) or 3 (Sky + Water).
+    // Cinematic time-transition duration, in SECONDS. Iteration 36: the
+    // transition runs on the self-contained tracker (lib/misc/
+    // eclipseTimeTracker.glsl) with a pure frameTimeCounter timeline, so this
+    // value is EXACT -- the glide starts at t = 0 on the detected jump and
+    // lands precisely this many seconds later. No engine fade tiers are
+    // involved any more; every listed value is honoured directly. DEFAULT 7.0.
+    // 0.0 == OFF (Instant): the routine floors at 0.05 s -> vanilla-like snap.
+    // Only has any effect while ECLIPSE_TIME_ACTIVE is 2 (Sky) or 3 (Sky+Water).
     #define TIME_TRANSITION_SPEED 7.0 //[0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4 1.6 1.8 2.0 2.5 3.0 4.0 5.0 7.0 10.0]
     // Eclipse-style GLOBAL cinematic smooth time (Performance screen).
     // Iteration 33: a strict THREE-STATE selector, default 2:
@@ -781,6 +780,14 @@
 //Very Common Stuff//
     #include "/lib/uniforms.glsl"
 
+    #if ECLIPSE_TIME_ACTIVE >= 2
+        // Iteration 36: self-contained cinematic time tracker (persistent
+        // custom image + frameTimeCounter timeline + delta-trigger). Declares
+        // the read interface for every program; the single-invocation writer
+        // is compiled only in the compute wrappers (CSH).
+        #include "/lib/misc/eclipseTimeTracker.glsl"
+    #endif
+
     #if SHADOW_QUALITY == -1
       float blissNativeTimeAngle = worldTime / 24000.0;
     #else
@@ -793,16 +800,15 @@
       float blissNativeTimeAngle = (tAfrc * (1.0-tAmix) + tAfrs * tAmix + hA) * 0.5;
     #endif
 
-    // ---- Eclipse GLOBAL cinematic time (Iteration 14 base / Iteration 22) --
-    // When ECLIPSE_TIME_ACTIVE, replace the native celestial time with an
-    // ENGINE-SMOOTHED one so the ENTIRE sky/sun-vector pipeline glides on a
-    // time jump instead of snapping. blissSunAngleS/C are smooth() custom
-    // uniforms (shaders.properties) holding the exponentially-eased sin/cos of
-    // the celestial angle, maintained by Iris across frames -- no fragile
-    // feedback buffer, no read/write loop. Reconstruct the eased angle (atan2
-    // avoids the 0/1 wrap) and run RV's own sunAngle->timeAngle remap on it, so
-    // in steady state it equals the native timeAngle and on a /time set or
-    // bed-sleep it eases over the smooth() fade time. Because every pass derives
+    // ---- Eclipse GLOBAL cinematic time (Iteration 14 base / Iteration 36) --
+    // When the transition selector is 2 (Sky) or 3 (Sky + Water), replace the
+    // native celestial time with the TRACKED VISUAL one so the ENTIRE
+    // sky/sun-vector pipeline glides on a time jump instead of snapping. The
+    // state lives in lib/misc/eclipseTimeTracker.glsl (persistent custom
+    // image, written once per frame by a shadowcomp compute invocation); run
+    // RV's own sunAngle->timeAngle remap on the tracked angle, so in steady
+    // state it equals the native timeAngle and on a /time set or bed-sleep it
+    // glides over TIME_TRANSITION_SPEED seconds. Because every pass derives
     // its sun/light vector, sky gradient and noon/night factors from THIS one
     // variable via GetSunVector(), the whole environment glides from a single
     // override. (The Iris-rendered shadow map and the vanilla sun/moon/star
@@ -818,65 +824,32 @@
     // the eased visual angle, so on a time jump the clouds and ground shadows
     // execute a high-speed time-lapse warp in lock-step with the eased sun.
     #if ECLIPSE_TIME_ACTIVE >= 2
-      // Iteration 23 -- LIVE speed slider. shaders.properties keeps EIGHT engine-
-      // smoothed sin/cos pairs at fixed fade tiers (0.4/0.8/1.2/2.0/3.0/5.0/7.0/
-      // 10.0 s). Pick the pair whose fade best matches TIME_TRANSITION_SPEED.
-      // Because that slider is a compile-time constant, this ternary ladder folds
-      // to ONE pair -- no runtime cost -- and each tier is a REAL cross-frame-
-      // smoothed uniform, so the transition needs no per-frame shader state. The
-      // default 7.0 slider selects the dedicated 7-second fade tier.
-      float blissSunAngleS =
-          (TIME_TRANSITION_SPEED <= 0.5 ? blissSunAngleS04  :
-           TIME_TRANSITION_SPEED <= 0.9 ? blissSunAngleS08  :
-           TIME_TRANSITION_SPEED <= 1.5 ? blissSunAngleS12  :
-           TIME_TRANSITION_SPEED <= 2.4 ? blissSunAngleS20  :
-           TIME_TRANSITION_SPEED <= 3.9 ? blissSunAngleS30  :
-           TIME_TRANSITION_SPEED <= 6.0 ? blissSunAngleS50  :
-           TIME_TRANSITION_SPEED <= 8.5 ? blissSunAngleS70  : blissSunAngleS100);
-      float blissSunAngleC =
-          (TIME_TRANSITION_SPEED <= 0.5 ? blissSunAngleC04  :
-           TIME_TRANSITION_SPEED <= 0.9 ? blissSunAngleC08  :
-           TIME_TRANSITION_SPEED <= 1.5 ? blissSunAngleC12  :
-           TIME_TRANSITION_SPEED <= 2.4 ? blissSunAngleC20  :
-           TIME_TRANSITION_SPEED <= 3.9 ? blissSunAngleC30  :
-           TIME_TRANSITION_SPEED <= 6.0 ? blissSunAngleC50  :
-           TIME_TRANSITION_SPEED <= 8.5 ? blissSunAngleC70  : blissSunAngleC100);
-      // Slider 0.0 == OFF (Instant): skip easing entirely and snap like vanilla.
+      // ---- Iteration 36: 100% SELF-CONTAINED VISUAL CLOCK. ----
+      // The Iris engine-side smooth() uniforms are abandoned for the animation
+      // timeline: they could not be flushed from the shader, so back-to-back
+      // time commands collapsed their (sin, cos) average into a degenerate
+      // low-magnitude state that accumulated across triggers (2nd trigger
+      // froze, 3rd snapped). Iteration 35's attempted re-base also crashed
+      // compilation: its cloud-clock wrap used a bare "eclCloudD -= ..."
+      // ASSIGNMENT STATEMENT at common.glsl global scope, which is illegal
+      // GLSL (this scope only allows declarations with initializers) -- the
+      // ANTLR ParseCancellationException at 'eclCloudD -='. Both problems are
+      // gone: lib/misc/eclipseTimeTracker.glsl owns explicit state in a tiny
+      // persistent custom image, updated once per frame by one shadowcomp
+      // compute invocation. A wrap-aware DELTA-TRIGGER on the raw native sun
+      // angle detects every /time set, bed sleep or dimension switch and
+      // restarts a fresh smoothstep routine from t = 0 (from the current
+      // visual angle, so mid-glide jumps hand over seamlessly); the timeline
+      // runs purely on frameTimeCounter and completes in exactly
+      // TIME_TRANSITION_SPEED seconds. State is fully overwritten on every
+      // trigger, so the 1st, 2nd and 100th jump are identical -- no freeze,
+      // no snap, no accumulation. This block only READS the tracker (one
+      // texelFetch) and is pure declarations-with-initializers.
+      // Slider 0.0 == OFF (Instant): the routine duration floors at 0.05 s.
       const bool eclEnabled = (TIME_TRANSITION_SPEED > 0.05);
-
-      // ---- Iteration 34/35: lightweight Iteration 31 exponential-decay
-      // structure (single atan of the engine-smoothed sin/cos pair + RV's
-      // remap; the smooth() uniforms ARE the frame-rate-independent
-      // 1 - exp(-t/tau) easing, maintained by Iris across frames).
-      //
-      // Iteration 35 -- HARD STATE FLUSH ON REPEATED TIME JUMPS. The stale
-      // state that broke back-to-back time commands is the smoothed vector's
-      // MAGNITUDE: each jump drags the (sin,cos) average across the interior
-      // of the unit circle, and when a 2nd/3rd command lands before the state
-      // re-converges, the leftover collapsed magnitude accumulates instead of
-      // flushing. The old hard gate (eclMag > 0.01 ? eased : native) turned
-      // that accumulation into the observed failure ladder: trigger 1 fluid
-      // (healthy state), trigger 2 frozen (angle lingering on a degenerate
-      // low-magnitude path), trigger 3 an instant snap (gate trip). GLSL
-      // cannot write the engine-side smooth() state, so the flush is done by
-      // RE-BASING: the eased angle's authority over the visual clock is
-      // weighted by the CONFIDENCE of the state -- its squared magnitude,
-      // mapped through a smoothstep. Healthy state (single fresh trigger,
-      // |v| near 1) -> weight 1: the pure Iteration 31 eased glide, bit-for-
-      // bit. Collapsed state (rapid repeated commands / abrupt environment
-      // shift) -> weight falls to 0: every accumulation variable is
-      // effectively cleared, and the visual clock re-bases CONTINUOUSLY to
-      // fresh native time -- baseline t=0, exactly like the very first
-      // trigger. The engine state then re-converges around the new target,
-      // confidence recovers, and the next command starts from a clean
-      // instance. No boolean sits in the signal path (nothing can snap) and
-      // no low-magnitude path is ever followed (nothing can freeze). Dead
-      // smooth() uniforms read as permanent zero confidence -> native time,
-      // preserving the old safety fallback. The +1e-6 keeps atan defined at
-      // the exact origin so the flush path can never produce NaN.
-      float eclMag = blissSunAngleS * blissSunAngleS + blissSunAngleC * blissSunAngleC;
-      float eclConf = eclEnabled ? smoothstep(0.0025, 0.16, eclMag) : 0.0;
-      float eclSunAngle = fract(atan(blissSunAngleS, blissSunAngleC + 1.0e-6) * 0.15915494309189535); // /(2*pi)
+      float eclSunAngle = eclEnabled ? EclipseVisualSunAngle() : fract(sunAngle);
+      // RV's own sunAngle -> timeAngle remap, applied to the tracked visual
+      // angle; in steady state the tracker equals native time exactly.
       float eTAmin = fract(eclSunAngle - 0.033333333);
       float eTAlin = eTAmin < 0.433333333 ? eTAmin * 1.15384615385 : eTAmin * 0.882352941176 + 0.117647058824;
       float eHA    = eTAlin > 0.5 ? 1.0 : 0.0;
@@ -884,20 +857,17 @@
       float eTAfrs = eTAfrc * eTAfrc * (3.0 - 2.0 * eTAfrc);
       float eTAmix = eHA < 0.5 ? 0.3 : -0.1;
       float eclEasedTimeAngle = (eTAfrc * (1.0 - eTAmix) + eTAfrs * eTAmix + eHA) * 0.5;
-      // Wrap-aware re-base: fresh native baseline + shortest-arc offset scaled
-      // by confidence (the flush weight).
-      float eclTimeD = fract(eclEasedTimeAngle - blissNativeTimeAngle + 0.5) - 0.5;
-      float timeAngle = fract(blissNativeTimeAngle + eclTimeD * eclConf);
-      // Kept for the custom-cloud-speed consumers (Iteration 31 structure);
-      // derived from the same confidence so it also re-bases after a flush.
-      bool eclActive = eclConf > 0.5;
-      // Cloud clock: the same continuous re-base, on the shortest day offset,
-      // so it can never flip clocks discontinuously mid-transition.
-      float eclCloudNative = worldTime + mod(worldDay, 100) * 24000.0;
-      float eclCloudEased  = mod(worldDay, 100) * 24000.0 + eclSunAngle * 24000.0;
-      float eclCloudD = eclCloudEased - eclCloudNative;
-      eclCloudD -= 24000.0 * floor(eclCloudD / 24000.0 + 0.5); // wrap to +/-12000
-      float blissCloudTimeBase = eclCloudNative + eclCloudD * eclConf;
+      float timeAngle = eclEnabled ? eclEasedTimeAngle : blissNativeTimeAngle;
+      // Kept for the custom-cloud-speed consumers (Iteration 31 structure).
+      // Compile-time constant: with the tracker there is no degenerate state
+      // left to gate against, so "the easing system is live" is simply
+      // "the feature is enabled".
+      const bool eclActive = eclEnabled;
+      // Cloud clock rides the tracked visual angle (identical to the eased
+      // clock of Iterations 31-34 in steady state and during glides).
+      float blissCloudTimeBase = eclEnabled
+          ? (mod(worldDay, 100) * 24000.0 + eclSunAngle * 24000.0)
+          : (worldTime + mod(worldDay, 100) * 24000.0);
     #else
       float timeAngle = blissNativeTimeAngle;
       float blissCloudTimeBase = (worldTime + mod(worldDay, 100) * 24000.0);

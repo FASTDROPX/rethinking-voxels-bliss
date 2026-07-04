@@ -2447,3 +2447,87 @@ VERIFICATION (Iteration 35)
      water untouched from Iteration 34)                                      : PASS
    - Preprocessor conditionals balanced                                      : PASS
 =======================================================================
+
+=======================================================================
+ITERATION 36: Compile crash fixed + the time transition rebuilt as a
+100% self-contained tracker (delta-trigger, frameTimeCounter timeline)
+=======================================================================
+1. THE COMPILE CRASH (ANTLR ParseCancellationException near 'eclCloudD -=',
+flattened line 1077).
+ROOT CAUSE. The Iteration 35 cloud-clock wrap used a bare compound
+assignment STATEMENT at lib/common.glsl global scope:
+    eclCloudD -= 24000.0 * floor(eclCloudD / 24000.0 + 0.5);
+GLSL only allows declarations (with initializers) at global scope -- the
+file's own comments document exactly this constraint -- so Iris's parser
+rejected the translation unit. The statement is gone; the entire rebuilt
+block is pure declarations-with-initializers.
+
+2. ENGINE-SIDE smooth() UNIFORMS ABANDONED FOR THE TIMELINE.
+All eight blissSunAngle sin/cos fade-tier pairs (smooth ids 231-246) are
+REMOVED from shaders.properties and lib/uniforms.glsl. They were engine-
+owned state the shader could never flush: repeated worldTime commands
+collapsed their (sin,cos) average into a degenerate low-magnitude state
+that accumulated across triggers. Nothing references them any more.
+
+3. THE SELF-CONTAINED TRACKER (new lib/misc/eclipseTimeTracker.glsl).
+STATE: a tiny persistent custom image (image.eclipse_time_img, 2x1
+RGBA32F, never cleared) holding: init magic | previous frame's RAW native
+sun angle | frameTimeCounter at the last detected jump (t = 0) | visual
+angle at that jump | current eased visual angle | last frameTimeCounter.
+WRITER: EclipseUpdateTimeState(), executed by EXACTLY ONE compute
+invocation per frame at the top of shadowcomp.csh (the earliest always-on
+compute pass -- it hosts RV's voxel SDF update and runs in every dimension
+every frame), guarded by gl_GlobalInvocationID == 0.
+READERS: every program, through one texelFetch. This is why the state is
+an IMAGE and not an SSBO: 49 of the pack's programs compile at #version
+130, where SSBOs do not exist, while texelFetch is core GLSL 1.30.
+FOOLPROOF DELTA-TRIGGER: each frame the writer compares the raw native
+sun angle against the previous frame's sample, wrap-aware. Normal play
+advances ~0.000014 turns per frame; anything beyond 0.004 turns (~96
+ticks) is a /time set, bed sleep, time plugin or dimension switch. On
+detection the routine restarts COMPLETELY FRESH from t = 0, starting from
+the CURRENT visual angle -- so a jump landing mid-glide hands over
+seamlessly, and because the state is fully overwritten on every trigger,
+NOTHING accumulates: the 1st, 2nd and 100th jump run the identical
+routine. No freeze, no snap, by construction.
+TIMELINE: pure frameTimeCounter. t = (now - jumpStart) /
+TIME_TRANSITION_SPEED, eased with smoothstep, clamped at 1 -- the glide
+starts at t = 0 and lands after EXACTLY the slider's seconds on the LIVE
+native target (sampled fresh each frame, so normal time advance during
+the glide is folded in), then tracks native 1:1 until the next trigger.
+The slider value is now honoured directly; no fade tiers exist.
+GUARDS: init-magic + frameTimeCounter-reset detection hard-flush the
+state to a converged baseline on cold start, shader reload or counter
+wrap; slider 0.0 floors the routine at 0.05 s (instant, vanilla-like).
+CONSUMERS: common.glsl reads the tracked angle (one texelFetch), applies
+RV's remap, and drives timeAngle + blissCloudTimeBase from it. eclActive
+for the custom-cloud-speed paths is now a compile-time constant
+(eclEnabled) -- with the tracker there is no degenerate state left to
+gate against, so no runtime clock flip exists anywhere.
+
+4. KEPT FROM ITERATION 33/34 (verified).
+All voxel/GI/path-tracing parameters (GI_STRENGTH=2, GI_SAMPLE_COUNT=13,
+MAX_TRACE_COUNT=256, SDF_UPDATE_INTERVAL=0, voxel volume sizes), shadow
+routines, water/caustic style 4, profile.HIGH byte-identical (incl.
+ECLIPSE_TIME_ACTIVE=2, TIME_TRANSITION_SPEED=7.0, LIGHT_COLOR_MULTS),
+legacy-code-only profile name (S1)(Sl)High+ (Default) / Eleve+ (Defaut)
+(both lang files raw-hex-free), and the strict 3-state selector
+ECLIPSE_TIME_ACTIVE //[1 2 3] with default 2 (Sky): mode 2 never touches
+the wave clock, mode 3 rides it with the sky (eclipse_water.glsl
+untouched).
+
+VERIFICATION (Iteration 36)
+   - Illegal global-scope assignment removed; rebuilt block is
+     declarations-with-initializers only                                     : PASS
+   - blissSunAngle* uniforms fully removed (grep clean, code + properties)   : PASS
+   - Tracker state image declared (persistent, 2x1 RGBA32F); reader is
+     texelFetch-only -> valid in the 49 #version 130 programs                : PASS
+   - Writer compiled only in 430 compute (CSH); called once per frame from
+     shadowcomp.csh invocation 0                                             : PASS
+   - Delta-trigger threshold 4 orders of magnitude above steady play         : PASS
+   - Fresh t=0 routine on every jump, started from the current visual
+     angle -> jump #1 == jump #2 == jump #100, continuous by construction    : PASS
+   - Cold start / reload / frameTimeCounter wrap -> hard flush to baseline   : PASS
+   - Preprocessor balance OK in all edited files                             : PASS
+   - Iteration 33/34 configs, profiles, lang, water split intact             : PASS
+=======================================================================

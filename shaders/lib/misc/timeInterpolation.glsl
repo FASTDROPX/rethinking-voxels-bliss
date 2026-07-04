@@ -96,15 +96,18 @@ float bliss_GetVisualTimeFract(){
 }
 
 // ---------------------------------------------------------------------
-//  SMOOTHED SUN  (Iteration 14: now applied globally, not here)
+//  SMOOTHED SUN  (Iteration 14 base; Iteration 36: tracker-based)
 // ---------------------------------------------------------------------
-//  The cinematic easing is no longer a self-contained colortex feedback read.
-//  It is applied at the celestial ROOT in lib/common.glsl, where the native
-//  timeAngle is replaced by one reconstructed from the engine-smoothed
-//  blissSunAngleS/C custom uniforms. Every pass then derives its eased
-//  sun/light vector, sky gradient and noon/night factors from that single
-//  override via GetSunVector(), so the whole environment glides together.
-//  This header keeps the exact easing math above as documentation/reference;
-//  no per-consumer sun accessor is needed any more.
+//  The cinematic easing is applied at the celestial ROOT in lib/common.glsl.
+//  As of Iteration 36 the state described in the ARCHITECTURE section above
+//  finally exists literally: lib/misc/eclipseTimeTracker.glsl keeps
+//  (previous native angle, jump start time, jump start angle, visual angle)
+//  in a persistent 2x1 custom image, updated once per frame by a single
+//  shadowcomp compute invocation, with a raw-angle delta-trigger and a pure
+//  frameTimeCounter timeline. The native timeAngle is replaced by RV's remap
+//  of that tracked visual angle, so every pass derives its eased sun/light
+//  vector, sky gradient and noon/night factors from the single override via
+//  GetSunVector(), and the whole environment glides together. This header
+//  keeps the original easing math above as documentation/reference.
 
 #endif // BLISS_TIME_INTERP_GLSL
