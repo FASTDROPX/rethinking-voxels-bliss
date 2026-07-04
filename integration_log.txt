@@ -2847,3 +2847,62 @@ VERIFICATION (Iteration 40 R2)
    - Archive renamed to the contiguous no-space colored form            : PASS
    - Preprocessor balance OK                                            : PASS
 =======================================================================
+
+=======================================================================
+ITERATION 40 -- REVISION 3 (FINAL): the missing-';'-at-'{' crash root-
+caused for real, fixed, and STRUCTURALLY VALIDATED
+=======================================================================
+WHY THE ERROR KEPT SHIFTING. Reports at flattened lines 2651 -> 2658 ->
+2662 moved by exactly the number of lines each revision inserted ABOVE
+the same spot -- proof the previous fixes never touched the offender.
+Mapping all three line numbers onto the include-flattened source showed
+every report landing (with a constant one-line header offset) on the
+SAME token: the opening brace of ppAsciiLuma(), one line below the ASCII
+edge-glyph table.
+
+TRUE ROOT CAUSE: A COMMENT ENDING IN A BACKSLASH. The edge-glyph table's
+"\" glyph rows carried the source shader's comment style: "... } // \".
+A backslash at end-of-line is a PREPROCESSOR LINE CONTINUATION, so each
+such comment SPLICED the next source line into itself. The final one
+swallowed ppAsciiPatternAngle's closing brace: the function never
+terminated, and every following function -- ppAsciiLuma, the cell
+sampler, ApplyAsciiMode, eventually main() itself -- became an illegal
+NESTED function definition. The parser read "float ppAsciiLuma(vec3 c)"
+inside a function body as a local declaration and reported the expected
+';' at its '{' -- the exact error, at the exact column, in every
+revision (the previous array-signature theories were wrong; the ivec4
+packing they introduced is harmless and kept). The bug only armed when
+ASCII Mode was toggled ON, which is why the retro filters ran clean.
+
+FIX. The two offending comments now spell the glyph in words
+("// backslash glyph"). A pack-wide sweep confirms NO comment anywhere
+in the pack ends in a backslash (legitimate multiline #define
+continuations are unaffected).
+
+STRUCTURAL VALIDATION (new tooling, results recorded). The full
+world0/final.fsh was include-flattened and run through a REAL C
+preprocessor (which performs the same line splicing and comment
+stripping Iris's JCPP does), then brace balance and nested-function-
+definition checks ran on the preprocessed token stream for seven option
+matrices:
+    all defaults ................................ PASS
+    ASCII on (edge glyphs on) ................... PASS
+    ASCII on, edges off, terminal green ......... PASS
+    all 12 CRT/VCR retro toggles on ............. PASS
+    BodyCam on .................................. PASS
+    BodyCam + NVG sneak + all its artifacts ..... PASS
+    EVERYTHING on simultaneously ................ PASS
+Validator regression-proofed against the PRE-fix tree: it flags
+"nested function definition: float ppAsciiLuma(vec3 c) {" and a final
+brace depth of 1 -- reproducing the reported failure exactly.
+
+LOCKED-IN ITERATION 40 REQUIREMENTS (re-verified in this tree):
+BodyCam fully integrated (26 parameters, sub-menu, sliders); "Hover over
+me" and "RTX version" excluded; the English warning tooltip at the
+bottom of the BodyCam master button hover; Credits tooltip opens with
+"BetterVoxels DEV: FastdropX"; Special Thanks lists "Xonk (Eclipse
+transition), and the original creators of the CRT/VCR, ASCII, and
+BodyCam shaders"; archive name (S1)(Sl)Better(Sf)(Sl)Voxels(Sf)(Sl).zip;
+Iteration 38 base (tracker, exponential transition, star rotation,
+voxel configs) untouched.
+=======================================================================

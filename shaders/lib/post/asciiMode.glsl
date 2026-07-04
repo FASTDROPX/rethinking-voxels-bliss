@@ -37,14 +37,19 @@
 
 // ---- Glyph tables, values ported VERBATIM from ASCII Shader V1.2 -----------
 // Luminance ramp: FULL @ ? O P o c i . (empty).
-// Iteration 40 (final form): the glyph plumbing is now completely ARRAY-FREE.
-// Iris's ANTLR parser rejects array declarators in FUNCTION SIGNATURES (both
-// the original "int[8] f(...)" return form and the "out int p[8]" parameter
-// form raised the missing-';'-at-'{' ParseCancellationException at the same
-// spot), so the eight 8-bit row bitmasks of each glyph are packed into a pair
-// of ivec4s (rows 0-3 / rows 4-7) and read back with dynamic vector indexing
-// -- plain vector syntax that every GLSL frontend parses. The bitmask VALUES
-// are byte-identical to the source shader.
+// Iteration 40 R3 -- THE ACTUAL missing-';'-at-'{' ROOT CAUSE, found by
+// mapping all three reported error lines onto the include-flattened source:
+// every report landed on ppAsciiLuma's opening brace, one line below this
+// table. The angle table's backslash-glyph comments ended in a literal "\"
+// -- a PREPROCESSOR LINE CONTINUATION -- so each such comment SPLICED the
+// following source line into itself. The final one swallowed the function's
+// closing brace: ppAsciiPatternAngle never terminated, ppAsciiLuma became an
+// illegal nested function, and the parser reported the expected ';' at its
+// '{'. The comments now spell the glyph name in words; a pack-wide sweep
+// confirms no comment anywhere ends in a backslash. (The ivec4-pair packing
+// below, introduced while hunting this, is kept: it is simple, parses on
+// every frontend, and the bitmask VALUES remain byte-identical to the
+// source shader.)
 void ppAsciiPattern(float luminance, out ivec4 rowsLo, out ivec4 rowsHi) {
     if (luminance > 0.9)      { rowsLo = ivec4(0xF8, 0xF8, 0xF8, 0xF8); rowsHi = ivec4(0xF8, 0x00, 0x00, 0x00); } // FULL
     else if (luminance > 0.8) { rowsLo = ivec4(0x70, 0x90, 0x60, 0xB8); rowsHi = ivec4(0x88, 0x70, 0x00, 0x00); } // @
@@ -66,11 +71,11 @@ void ppAsciiPattern(float luminance, out ivec4 rowsLo, out ivec4 rowsHi) {
         if (a < 0.3927 || a > 5.8905)        { rowsLo = ivec4(0x20, 0x20, 0x20, 0x20); rowsHi.x = 0x20; } // |
         else if (a < 1.1781)                 { rowsLo = ivec4(0x80, 0x40, 0x20, 0x10); rowsHi.x = 0x08; } // /
         else if (a < 1.9635)                 { rowsLo = ivec4(0x00, 0x00, 0xF8, 0x00); }                  // -
-        else if (a < 2.7489)                 { rowsLo = ivec4(0x08, 0x10, 0x20, 0x40); rowsHi.x = 0x80; } // \
+        else if (a < 2.7489)                 { rowsLo = ivec4(0x08, 0x10, 0x20, 0x40); rowsHi.x = 0x80; } // backslash glyph
         else if (a < 3.5343)                 { rowsLo = ivec4(0x20, 0x20, 0x20, 0x20); rowsHi.x = 0x20; } // |
         else if (a < 4.3197)                 { rowsLo = ivec4(0x80, 0x40, 0x20, 0x10); rowsHi.x = 0x08; } // /
         else if (a < 5.1051)                 { rowsLo = ivec4(0x00, 0x00, 0xF8, 0x00); }                  // -
-        else                                 { rowsLo = ivec4(0x08, 0x10, 0x20, 0x40); rowsHi.x = 0x80; } // \
+        else                                 { rowsLo = ivec4(0x08, 0x10, 0x20, 0x40); rowsHi.x = 0x80; } // backslash glyph
     }
 #endif
 
