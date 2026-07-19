@@ -56,6 +56,5 @@ This project is a legal modified fork compliant with the **Complementary Agreeme
 * Core Voxel Architecture based on Complementary / Rethinking Voxels.
 * gri573 (For the incredible voxel path-tracing implementation in Rethinking Voxels).
 * EminGT (The creator of the foundational Complementary Shaders framework).
-* Xonk (Eclipse transition algorithms).
 * Original community contributors behind the base CRT, ASCII, and BodyCam screen matrices.
 *Developed with passion for tactical realism, analog horror creators, and immersion enthusiasts.*
